@@ -6,6 +6,8 @@
 #[cfg(target_os = "macos")]
 mod fullscreen;
 #[cfg(target_os = "linux")]
+mod layer;
+#[cfg(target_os = "linux")]
 mod linux;
 mod sidecar;
 #[cfg(target_os = "macos")]
@@ -331,6 +333,11 @@ fn sidecar_send(app: AppHandle, msg: Value) {
 fn set_typing(app: AppHandle, window: WebviewWindow, on: bool) {
     let was = TYPING.swap(on, Ordering::Relaxed);
     let _ = window.set_focusable(on);
+    // Layer-shell: the overlay is given the keyboard by the protocol, for as long as the field is open (layer.rs).
+    #[cfg(target_os = "linux")]
+    if linux::native_wayland() {
+        layer::keyboard(&window, on);
+    }
     // COSMIC: the unmanaged overlay can't get the keyboard, so it's an ordinary window while typing (linux.rs).
     #[cfg(target_os = "linux")]
     if linux::unmanaged_overlay() && was != on {
@@ -1044,6 +1051,11 @@ fn shows_answer(msg: &Value) -> bool {
 
 /// The cursor in global points (macOS) or physical pixels (Windows): the units monitor_from_point takes.
 fn cursor_global(app: &AppHandle) -> Option<(f64, f64)> {
+    // On Wayland (layer-shell) GTK always answers 0, 0: no cursor is better than a wrong one (linux.rs, layer.rs).
+    #[cfg(target_os = "linux")]
+    if linux::native_wayland() {
+        return None;
+    }
     let cur = app.cursor_position().ok()?;
     let s = app.primary_monitor().ok().flatten().map_or(1.0, |m| m.scale_factor());
     Some(cursor_from_raw(cur.x, cur.y, s))
@@ -1140,14 +1152,15 @@ fn build_overlays(app: &AppHandle) -> tauri::Result<()> {
         if mine.iter().any(|id| id == "\"sidekick\"") {
             *SIDEKICK_OVERLAY.lock().unwrap() = Some(label.clone());
         }
-        // COSMIC: built hidden, then shown unmanaged (linux.rs set_unmanaged).
+        // COSMIC: built hidden, then shown unmanaged (linux.rs set_unmanaged). Layer-shell: built hidden, made a layer
+        // surface on this screen, then shown (layer.rs present).
         #[cfg(target_os = "linux")]
-        let unmanaged = linux::unmanaged_overlay();
+        let (unmanaged, as_layer) = (linux::unmanaged_overlay() && !linux::native_wayland(), linux::native_wayland());
         #[cfg(not(target_os = "linux"))]
-        let unmanaged = false;
+        let (unmanaged, as_layer) = (false, false);
         let w = WebviewWindowBuilder::new(app, label, WebviewUrl::App("desktop.html".into()))
             .title("Roamies")
-            .visible(!unmanaged)
+            .visible(!unmanaged && !as_layer)
             .transparent(true)
             .decorations(false)
             .shadow(false)
@@ -1164,9 +1177,14 @@ fn build_overlays(app: &AppHandle) -> tauri::Result<()> {
             .inner_size(size.width, size.height)
             .initialization_script(init)
             .build()?;
-        w.set_ignore_cursor_events(true)?;
+        // A layer overlay starts with no input at all, set once it is on the screen (layer.rs present).
+        if !as_layer {
+            w.set_ignore_cursor_events(true)?;
+        }
         #[cfg(target_os = "linux")]
-        if unmanaged {
+        if as_layer {
+            layer::present(&w, i);
+        } else if unmanaged {
             linux::set_unmanaged(&w, true, false);
         }
         #[cfg(target_os = "macos")]
@@ -1524,6 +1542,12 @@ fn pump_cursor(app: AppHandle) {
         // Each monitor query is a round trip to the main thread, so the main screen's scale is looked up rarely.
         if n % 240 == 1 {
             primary_scale = app.primary_monitor().ok().flatten().map_or(1.0, |m| m.scale_factor());
+        }
+        // Layer-shell: Wayland doesn't say where the pointer is over other apps, and GTK's answer is always 0, 0. The page
+        // gets no samples then (it roams on its own), instead of a cursor stuck in the corner.
+        #[cfg(target_os = "linux")]
+        if linux::native_wayland() {
+            continue;
         }
         let Ok(raw) = app.cursor_position() else { continue };
         // Cursor still: nothing new to send, so skip the per-window lookups (each is a main-thread round trip).

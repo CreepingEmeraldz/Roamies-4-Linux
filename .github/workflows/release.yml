@@ -85,7 +85,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev libasound2-dev patchelf libfuse2t64 gstreamer1.0-plugins-base gstreamer1.0-plugins-good
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev libasound2-dev libgtk-layer-shell-dev patchelf libfuse2t64 gstreamer1.0-plugins-base gstreamer1.0-plugins-good
 
       # Developer ID certificate into a throwaway keychain (removed at the end of the job).
       - name: Import Apple signing certificate
