@@ -11,6 +11,7 @@
       "deb": {
         "depends": [
           "libasound2",
+          "libgtk-layer-shell0",
           "xdg-utils"
         ],
         "recommends": [
@@ -20,6 +21,7 @@
       "rpm": {
         "depends": [
           "alsa-lib",
+          "gtk-layer-shell",
           "xdg-utils"
         ],
         "recommends": [

@@ -4,6 +4,10 @@
 // on top or see the cursor over other apps, and the overlay needs all three. So on a Wayland session GTK is told to
 // use X11 before it starts, and the code that places windows is the same everywhere. What Wayland still takes away
 // (the cursor over other apps, global shortcuts, grabbing the screen) is handled per feature below.
+//
+// The exception is a Wayland compositor with layer-shell (niri, sway, Hyprland, ...): there GTK stays on Wayland and
+// the overlay is a layer surface (layer.rs), because an XWayland window can't be kept on top there. Only the
+// overlay's placement changes: click areas, screenshots, the clipboard and the rest are the Wayland ones below.
 
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -11,6 +15,8 @@ use std::time::Duration;
 
 use serde_json::{json, Value};
 use tauri::{AppHandle, Manager};
+
+use crate::layer;
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub(crate) enum Session {
@@ -35,9 +41,15 @@ fn session_from(session_type: Option<&str>, wayland_display: Option<&str>) -> Se
 }
 
 static SESSION: OnceLock<Session> = OnceLock::new();
+static LAYER: OnceLock<bool> = OnceLock::new();
 
 pub(crate) fn session() -> Session {
     *SESSION.get().unwrap_or(&Session::X11)
+}
+
+/// Whether GTK runs on Wayland itself and the overlay is a layer surface (layer.rs), not an XWayland window.
+pub(crate) fn native_wayland() -> bool {
+    *LAYER.get().unwrap_or(&false)
 }
 
 /// First thing in main, before GTK starts and before any other thread exists.
@@ -45,6 +57,25 @@ pub(crate) fn init() {
     let env = |k: &str| std::env::var(k).ok();
     let s = session_from(env("XDG_SESSION_TYPE").as_deref(), env("WAYLAND_DISPLAY").as_deref());
     let _ = SESSION.set(s);
+    // A GDK_BACKEND the user set to x11 is a choice for XWayland, and layer-shell can't be had there.
+    let native = s == Session::Wayland && layer::wanted() && env("GDK_BACKEND").as_deref().map_or(true, |b| b.contains("wayland"));
+    if native {
+        std::env::set_var("GDK_BACKEND", "wayland");
+        // The compositor might not have the protocol after all (ROAMIES_LAYER=1 on GNOME). GDK can't change backend
+        // once it has started, so this program starts again on XWayland, as it would have without layer-shell.
+        if gtk::init().is_ok() && !layer::supported() {
+            eprintln!("This compositor has no layer-shell: starting again on XWayland");
+            use std::os::unix::process::CommandExt;
+            let err = std::process::Command::new(std::env::current_exe().unwrap_or_else(|_| "roamies".into()))
+                .args(std::env::args_os().skip(1))
+                .env("ROAMIES_LAYER", "0")
+                .env_remove("GDK_BACKEND")
+                .exec();
+            eprintln!("couldn't start again: {err}");
+        }
+        let _ = LAYER.set(true);
+        return;
+    }
     if s == Session::Wayland {
         if env("DISPLAY").is_some_and(|d| !d.is_empty()) {
             std::env::set_var("GDK_BACKEND", "x11");

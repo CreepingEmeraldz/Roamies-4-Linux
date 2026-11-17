@@ -13,7 +13,11 @@ Linux (beta) uses the same voice helper (`voice-win` builds for Linux too: ALSA 
 `toggle` command for `roamies --talk` on Wayland) and no hands helper. Its shell code is `src-tauri/src/linux.rs`:
 every window is an X11 window (`GDK_BACKEND=x11` on Wayland, through XWayland), the overlay lets clicks through by
 region (the page reports its click areas, `host.js` → `set_hit_rects`) instead of following the cursor, and
-screenshots, copying, Open at Login and AppImage-only updates live there. Debug aids: `ROAMIES_TRACE=1` prints the
+screenshots, copying, Open at Login and AppImage-only updates live there. On compositors with layer-shell (niri, sway,
+Hyprland, river, Wayfire, labwc; `ROAMIES_LAYER=1`/`0` forces it) GTK stays on Wayland and each overlay is a layer
+surface (`src-tauri/src/layer.rs`): over everything, one per screen, keyboard only while the question field is open.
+Wayland doesn't tell a client where the pointer is over other apps, so there the page gets no pointer samples and the
+sidecar doesn't offer the Cursor size. Debug aids: `ROAMIES_TRACE=1` prints the
 overlay's click areas, and in debug builds `ROAMIES_TEST_AUDIO=<wav>` stands in for the microphone.
 
 ## Commands
