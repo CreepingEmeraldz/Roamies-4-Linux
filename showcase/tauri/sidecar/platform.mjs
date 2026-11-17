@@ -31,6 +31,10 @@ export function linuxSession(env = process.env) {
  *  the Cursor size and following the cursor all need it. Everywhere but a Wayland session. */
 export const seesPointer = (platform, session) => platform !== 'linux' || session === 'x11';
 
+/** Whether the app knows where the pointer is (not whether it sees clicks and hover): seesPointer, or on Wayland the
+ *  pointer helper the app runs on niri (ROAMIES_POINTER=1, src-tauri/src/pointer.rs). The Cursor size needs only this. */
+export const knowsCursor = (platform, session, env = process.env) => seesPointer(platform, session) || env.ROAMIES_POINTER === '1';
+
 /** Whether the app can hold global shortcuts and watch the talk keys itself. On Wayland no app can: there the
  *  user binds keys to `roamies --summon`, `--talk` and the rest in the desktop's keyboard settings. */
 export const hasHotkeys = (platform, session) => platform !== 'linux' || session === 'x11';

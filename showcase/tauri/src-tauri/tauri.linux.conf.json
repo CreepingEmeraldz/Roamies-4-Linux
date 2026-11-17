@@ -2,6 +2,7 @@
   "bundle": {
     "externalBin": [
       "binaries/roamies-voice",
+      "binaries/roamies-pointer",
       "binaries/roamies-node"
     ],
     "linux": {
@@ -12,6 +13,7 @@
         "depends": [
           "libasound2",
           "libgtk-layer-shell0",
+          "libpipewire-0.3-0t64 | libpipewire-0.3-0",
           "xdg-utils"
         ],
         "recommends": [
@@ -22,6 +24,7 @@
         "depends": [
           "alsa-lib",
           "gtk-layer-shell",
+          "pipewire-libs",
           "xdg-utils"
         ],
         "recommends": [
