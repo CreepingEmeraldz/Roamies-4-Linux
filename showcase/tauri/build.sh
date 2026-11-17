@@ -12,7 +12,7 @@ cp -R ../roamies ../onboarding ../panel dist/
 TARGET=""; prev=""; for a in "$@"; do [ "$prev" = "--target" ] && TARGET="$a"; prev="$a"; done
 ../tauri/sidecar/fetch-node.sh ${TARGET:+"$TARGET"}
 # Windows helpers: voice (Parakeet speech on the PC) and hands (windows, capture, UI Automation, OCR); macOS
-# builds its Swift twins in build.rs. Linux has the voice helper only (the same Rust one as Windows).
+# builds its Swift twins in build.rs. Linux has the voice helper (the same Rust one as Windows) and the pointer helper for niri.
 # Always optimised: a debug voice build is far too slow at reading speech.
 TRIPLE="${TARGET:-$(rustc -vV | sed -n 's/^host: //p')}"
 case "$TRIPLE" in
@@ -30,7 +30,10 @@ case "$TRIPLE" in
   *-linux-*)
     mkdir -p src-tauri/binaries
     cargo build --release --locked --manifest-path src-tauri/voice-win/Cargo.toml --target "$TRIPLE"
-    cp "src-tauri/voice-win/target/$TRIPLE/release/roamies-voice" "src-tauri/binaries/roamies-voice-$TRIPLE" ;;
+    cp "src-tauri/voice-win/target/$TRIPLE/release/roamies-voice" "src-tauri/binaries/roamies-voice-$TRIPLE"
+    # The pointer helper for niri (pointer-linux): where the pointer is, read from a screen capture.
+    cargo build --release --locked --manifest-path src-tauri/pointer-linux/Cargo.toml --target "$TRIPLE"
+    cp "src-tauri/pointer-linux/target/$TRIPLE/release/roamies-pointer" "src-tauri/binaries/roamies-pointer-$TRIPLE" ;;
 esac
 cd src-tauri
 # macOS signing: APPLE_SIGNING_IDENTITY if set, else the first Developer ID Application certificate in

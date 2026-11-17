@@ -1,7 +1,7 @@
 // What the model is told about each system, and which features each one gets. Run: npm test
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { canCircle, canSnap, hasHands, hasHotkeys, hasVoice, hasWakeWord, linuxSession, micTrouble, needsVoiceModel, platformLine, samePair, seesPointer, writeChord, writeChords } from '../platform.mjs';
+import { canCircle, canSnap, hasHands, hasHotkeys, hasVoice, hasWakeWord, linuxSession, micTrouble, needsVoiceModel, platformLine, samePair, seesPointer, knowsCursor, writeChord, writeChords } from '../platform.mjs';
 
 const win = platformLine('win32', { arch: 'x64', release: '10.0.22631' });
 assert.match(win, /^Platform: Windows 11 on x64\./);
@@ -36,6 +36,9 @@ assert.equal(linuxSession({ ROAMIES_SESSION: 'nonsense' }), 'x11');
 
 // The pointer over other apps and global shortcuts: everywhere but Wayland.
 assert.ok(seesPointer('darwin') && seesPointer('win32') && seesPointer('linux', 'x11') && !seesPointer('linux', 'wayland') && !seesPointer('linux', ''));
+// The pointer helper (niri) gives the position on Wayland, but not clicks or hover.
+assert.ok(knowsCursor('linux', 'wayland', { ROAMIES_POINTER: '1' }) && !knowsCursor('linux', 'wayland', {}) && knowsCursor('linux', 'x11', {}) && knowsCursor('darwin', ''));
+assert.ok(!seesPointer('linux', 'wayland'), 'the helper does not make clicks visible');
 assert.ok(hasHotkeys('darwin') && hasHotkeys('win32') && hasHotkeys('linux', 'x11') && !hasHotkeys('linux', 'wayland'));
 // Voice: Linux has it, with the same downloaded model as Windows.
 assert.ok(hasVoice('darwin') && hasVoice('win32') && hasVoice('linux') && !hasVoice('freebsd'));

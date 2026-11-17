@@ -17,7 +17,11 @@ screenshots, copying, Open at Login and AppImage-only updates live there. On com
 Hyprland, river, Wayfire, labwc; `ROAMIES_LAYER=1`/`0` forces it) GTK stays on Wayland and each overlay is a layer
 surface (`src-tauri/src/layer.rs`): over everything, one per screen, keyboard only while the question field is open.
 Wayland doesn't tell a client where the pointer is over other apps, so there the page gets no pointer samples and the
-sidecar doesn't offer the Cursor size. Debug aids: `ROAMIES_TRACE=1` prints the
+sidecar doesn't offer the Cursor size, except on niri: the pointer helper (`src-tauri/pointer-linux`, run by
+`src/pointer.rs`) starts a capture of each screen through niri's `org.gnome.Mutter.ScreenCast` D-Bus service with the
+cursor as metadata, discards the pictures and prints the cursor's position (`ROAMIES_POINTER_DEBUG=1` or `--probe` logs
+the raw numbers; its tests run anywhere with libpipewire-dev). The sidecar then offers the Cursor size
+(`ROAMIES_POINTER=1`), though still not click or hover waits. Debug aids: `ROAMIES_TRACE=1` prints the
 overlay's click areas, and in debug builds `ROAMIES_TEST_AUDIO=<wav>` stands in for the microphone.
 
 ## Commands

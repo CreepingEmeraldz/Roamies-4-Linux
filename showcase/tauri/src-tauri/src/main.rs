@@ -9,6 +9,8 @@ mod fullscreen;
 mod layer;
 #[cfg(target_os = "linux")]
 mod linux;
+#[cfg(target_os = "linux")]
+mod pointer;
 mod sidecar;
 #[cfg(target_os = "macos")]
 mod snapshot;
@@ -35,6 +37,10 @@ use voice::{init_hotkeys, set_esc, set_hotkey, start_voice, stop_voice, to_voice
 static GENERATION: AtomicUsize = AtomicUsize::new(0);
 /// The overlay window the sidekick lives in. It moves to whichever screen the cursor is on.
 static SIDEKICK_OVERLAY: Mutex<Option<String>> = Mutex::new(None);
+/// Where each overlay's screen sits in the layout (logical px): turns the pointer helper's global position into the
+/// overlay's own (pointer.rs).
+#[cfg(target_os = "linux")]
+static OVERLAY_ORIGIN: Mutex<Vec<(String, (f64, f64))>> = Mutex::new(Vec::new());
 /// The setup guide is open: voice events go to it (for the "try it" test) instead of the agent.
 static ONBOARDING: AtomicBool = AtomicBool::new(false);
 const ONBOARDING_LABEL: &str = "onboarding";
@@ -1149,6 +1155,12 @@ fn build_overlays(app: &AppHandle) -> tauri::Result<()> {
         #[cfg(not(target_os = "macos"))]
         let size = tauri::LogicalSize::new(size.width, size.height - 1.0);
         let label = format!("overlay-{gen}-{i}");
+        #[cfg(target_os = "linux")]
+        {
+            let mut o = OVERLAY_ORIGIN.lock().unwrap();
+            o.retain(|(l, _)| !l.starts_with(&format!("overlay-{gen}-")));
+            o.push((label.clone(), (pos.x, pos.y)));
+        }
         if mine.iter().any(|id| id == "\"sidekick\"") {
             *SIDEKICK_OVERLAY.lock().unwrap() = Some(label.clone());
         }
@@ -1489,6 +1501,8 @@ fn pump_cursor(app: AppHandle) {
     let mut next = start;
     let mut sent: std::collections::HashMap<String, (f64, f64)> = std::collections::HashMap::new();
     let mut last_raw = (f64::NAN, f64::NAN);
+    #[cfg(target_os = "linux")]
+    let mut helper_seen = 0u64;
     let mut was_down = false;
     let mut tap = tap::Tap::new();
     thread::spawn(move || loop {
@@ -1543,10 +1557,23 @@ fn pump_cursor(app: AppHandle) {
         if n % 240 == 1 {
             primary_scale = app.primary_monitor().ok().flatten().map_or(1.0, |m| m.scale_factor());
         }
-        // Layer-shell: Wayland doesn't say where the pointer is over other apps, and GTK's answer is always 0, 0. The page
-        // gets no samples then (it roams on its own), instead of a cursor stuck in the corner.
+        // Layer-shell: Wayland doesn't say where the pointer is over other apps, and GTK's answer is always 0, 0. On niri
+        // the pointer helper reads it from a screen capture (pointer.rs); elsewhere the page gets no samples (it roams
+        // on its own), instead of a cursor stuck in the corner.
         #[cfg(target_os = "linux")]
         if linux::native_wayland() {
+            let Some((count, gx, gy)) = pointer::since(helper_seen) else { continue };
+            helper_seen = count;
+            let t = start.elapsed().as_secs_f64() * 1000.0;
+            let origins = OVERLAY_ORIGIN.lock().unwrap().clone();
+            for (label, w) in app.webview_windows() {
+                if !is_overlay(&label) {
+                    continue;
+                }
+                let Some((_, origin)) = origins.iter().find(|(l, _)| *l == label) else { continue };
+                let (x, y) = pointer::in_overlay((gx, gy), *origin);
+                let _ = w.eval(format!("window.__roamiePtr&&__roamiePtr({x:.1},{y:.1},{t:.1})"));
+            }
             continue;
         }
         let Ok(raw) = app.cursor_position() else { continue };
@@ -1996,6 +2023,10 @@ fn main() {
             #[cfg(target_os = "macos")]
             refresh_screen_notches();
             build_overlays(app.handle())?;
+            #[cfg(target_os = "linux")]
+            if linux::native_wayland() {
+                pointer::start();
+            }
             pump_cursor(app.handle().clone());
             watch_screens(app.handle().clone());
             #[cfg(target_os = "macos")]

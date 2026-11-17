@@ -54,7 +54,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev libasound2-dev libgtk-layer-shell-dev xvfb dbus-x11 xdotool
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev libasound2-dev libgtk-layer-shell-dev libpipewire-0.3-dev clang xvfb dbus-x11 xdotool
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -63,6 +63,7 @@ jobs:
           workspaces: |
             showcase/tauri/src-tauri -> target
             showcase/tauri/src-tauri/voice-win -> target
+            showcase/tauri/src-tauri/pointer-linux -> target
             showcase/tauri/src-tauri/hands-win -> target
 
       # Copies the web files into dist/, bundles the sidecar, then `cargo build` (debug). On macOS this also
@@ -94,6 +95,10 @@ jobs:
       - name: Test the Linux voice helper
         if: runner.os == 'Linux'
         run: cargo test --release --locked --manifest-path src-tauri/voice-win/Cargo.toml
+
+      - name: Test the Linux pointer helper
+        if: runner.os == 'Linux'
+        run: cargo test --release --locked --manifest-path src-tauri/pointer-linux/Cargo.toml
 
       - name: Test the Windows voice helper
         if: runner.os == 'Windows'

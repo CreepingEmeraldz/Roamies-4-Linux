@@ -54,7 +54,7 @@ import { GEMINI_CHOICES, GEMINI_DEFAULT_VOICE, GEMINI_LOOK_VOICES, GEMINI_MODEL,
 import { createSecrets, retryLoad, runInput } from './secrets.mjs';
 import { showTrayIcon } from './wintray.mjs';
 import { createActivity } from './activity.mjs';
-import { canCircle, canSnap, cleanMics, talkChords, hasHands, hasHotkeys, hasVoice, hasWakeWord, linuxSession, micTrouble, needsVoiceModel, platformLine, samePair, seesPointer, writeChord, writeChords } from './platform.mjs';
+import { canCircle, canSnap, cleanMics, talkChords, hasHands, hasHotkeys, hasVoice, hasWakeWord, linuxSession, micTrouble, needsVoiceModel, platformLine, samePair, seesPointer, knowsCursor, writeChord, writeChords } from './platform.mjs';
 import { openAuth, accountKeys, fallbackModel, keyCards, keyKinds, seesImages, signInCards } from './providers.mjs';
 import { OLLAMA, connectLocal, contextNote, downNote, forgetLocal, isSmallModel, newServer, noModelsNote, serverFor, serverList, syncLocal as syncServers, withWindow } from './local.mjs';
 import { activityLogs, buildReport, redact, reportDir, reportName, reveal, run, scrubConfig, tail } from './diagnostics.mjs';
@@ -147,7 +147,7 @@ const WAYLAND = SESSION === 'wayland';
 const POINTER_OK = seesPointer(process.platform, SESSION);
 const HOTKEYS_OK = hasHotkeys(process.platform, SESSION);
 // Cursor size follows the pointer, which a Wayland session can't see over other apps.
-const SIZES = [['default', 'Default'], ['small', 'Small'], ...(POINTER_OK ? [['cursor', 'Cursor']] : [])];
+const SIZES = [['default', 'Default'], ['small', 'Small'], ...(knowsCursor(process.platform, SESSION) ? [['cursor', 'Cursor']] : [])];
 const sizeNow = () => (SIZES.some(([s]) => s === config.size) ? config.size : 'default');
 // What the sidekick looks like: the goo blob, JARVIS (a globe of light with a HUD reticle at cursor size) or
 // one of four characters, each with its own Fish Audio voice. Roamie's used to be JARVIS's, saved in every
