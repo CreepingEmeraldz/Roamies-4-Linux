@@ -142,7 +142,8 @@ fn buffer_params(w: u32, h: u32) -> Vec<Vec<u8>> {
         id: spa::param::ParamType::Meta.as_raw(),
         properties: vec![
             id(spa::sys::SPA_PARAM_META_type, spa::sys::SPA_META_Cursor),
-            int_range(spa::sys::SPA_PARAM_META_size, cursor_size(64), cursor_size(1), cursor_size(256)),
+            // Up to 1024x1024 like OBS: the size is agreed with the screen's side, and a range that ends too low (niri sizes it for a big cursor) leaves no cursor metadata at all.
+            int_range(spa::sys::SPA_PARAM_META_size, cursor_size(64), cursor_size(1), cursor_size(1024)),
         ],
     };
     [buffers, header, cursor].into_iter().map(|o| pod_bytes(&Value::Object(o))).collect()
