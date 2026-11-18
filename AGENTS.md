@@ -21,7 +21,8 @@ sidecar doesn't offer the Cursor size, except on niri: the pointer helper (`src-
 `src/pointer.rs`) starts a capture of each screen through niri's `org.gnome.Mutter.ScreenCast` D-Bus service with the
 cursor as metadata, discards the pictures and prints the cursor's position (`ROAMIES_POINTER_DEBUG=1` or `--probe` logs
 the raw numbers; its tests run anywhere with libpipewire-dev). The sidecar then offers the Cursor size
-(`ROAMIES_POINTER=1`), though still not click or hover waits. Debug aids: `ROAMIES_TRACE=1` prints the
+(`ROAMIES_POINTER=1`), though still not click or hover waits. niri sends the cursor as metadata only with PipeWire 1.4.8 or
+newer (older ones draw it into the picture), so `roamies-pointer --check` fails on those and the Cursor size isn't offered. Debug aids: `ROAMIES_TRACE=1` prints the
 overlay's click areas, and in debug builds `ROAMIES_TEST_AUDIO=<wav>` stands in for the microphone.
 
 ## Commands

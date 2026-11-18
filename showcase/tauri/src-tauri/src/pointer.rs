@@ -26,7 +26,12 @@ fn parse(line: &str) -> Option<(f64, f64)> {
 
 /// Whether this session can have pointer samples: niri, and the helper is next to the app.
 pub(crate) fn available() -> bool {
-    std::env::var_os("NIRI_SOCKET").is_some_and(|v| !v.is_empty()) && super::helper_binary("roamies-pointer").is_some()
+    if !std::env::var_os("NIRI_SOCKET").is_some_and(|v| !v.is_empty()) {
+        return false;
+    }
+    // The helper says whether PipeWire is new enough for niri to send the cursor (it needs 1.4.8; see the helper).
+    let Some(bin) = super::helper_binary("roamies-pointer") else { return false };
+    Command::new(bin).arg("--check").stdin(Stdio::null()).stdout(Stdio::null()).stderr(super::log_stdio("pointer.log")).status().is_ok_and(|s| s.success())
 }
 
 /// Starts the helper if this session can use it, and keeps it going: when it ends it is started again after a pause,
