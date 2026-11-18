@@ -191,7 +191,9 @@ fn start_casts(outs: &[Output]) -> Result<(Connection, Vec<(Output, u32)>), Stri
     let (tx, rx) = mpsc::channel::<(Output, u32)>();
     for o in outs {
         // cursor-mode 2 = Metadata: the cursor is not painted into the picture, its position comes with each frame.
-        let props = HashMap::<&str, ZValue>::from([("cursor-mode", ZValue::U32(2))]);
+        // ROAMIES_POINTER_MODE overrides it, to find what a compositor means by its modes (0 hidden, 1 embedded, 2 metadata in Mutter).
+        let mode = std::env::var("ROAMIES_POINTER_MODE").ok().and_then(|v| v.parse::<u32>().ok()).unwrap_or(2);
+        let props = HashMap::<&str, ZValue>::from([("cursor-mode", ZValue::U32(mode))]);
         let stream: OwnedObjectPath = sess.call("RecordMonitor", &(o.name.as_str(), props)).map_err(|x| e(&format!("RecordMonitor {}", o.name), x))?;
         let sp = Proxy::new(&conn, BUS, stream.as_str().to_owned(), "org.gnome.Mutter.ScreenCast.Stream").map_err(|x| e("Stream", x))?;
         // Subscribe before Start: the node arrives as a signal right after it.
