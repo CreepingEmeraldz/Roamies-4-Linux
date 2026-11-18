@@ -225,7 +225,33 @@ fn start_casts(outs: &[Output]) -> Result<(Connection, Vec<(Output, u32)>), Stri
     Ok((conn, nodes))
 }
 
+/// niri sends the cursor as metadata only with PipeWire 1.4.8 or newer (an older one had a memory bug with it); on an
+/// older one it silently draws the cursor into the picture instead, where this helper can't read it. None when it's
+/// new enough, else the reason, in the user's words. ROAMIES_POINTER_FORCE=1 skips the check (for testing).
+fn too_old() -> Option<String> {
+    if std::env::var_os("ROAMIES_POINTER_FORCE").is_some() {
+        return None;
+    }
+    unsafe {
+        if pw::sys::pw_check_library_version(1, 4, 8) {
+            return None;
+        }
+        let v = std::ffi::CStr::from_ptr(pw::sys::pw_get_library_version()).to_string_lossy().into_owned();
+        Some(format!("PipeWire {v} is too old: niri needs 1.4.8 or newer to send the cursor's position (older ones draw it into the picture), so Cursor can't follow the mouse here"))
+    }
+}
+
 fn main() {
+    // `--check`: can this help at all here? (No screens are touched.) Roamies asks before it offers the Cursor size.
+    if std::env::args().any(|a| a == "--check") {
+        match too_old() {
+            Some(why) => {
+                eprintln!("roamies-pointer: {why}");
+                std::process::exit(2);
+            }
+            None => return,
+        }
+    }
     let debug = std::env::var_os("ROAMIES_POINTER_DEBUG").is_some() || std::env::args().any(|a| a == "--probe");
     if let Err(msg) = run(debug) {
         eprintln!("roamies-pointer: {msg}");
@@ -234,6 +260,9 @@ fn main() {
 }
 
 fn run(debug: bool) -> Result<(), String> {
+    if let Some(why) = too_old() {
+        return Err(why);
+    }
     let outs = niri_outputs()?;
     if outs.is_empty() {
         return Err("niri reports no screens".into());
