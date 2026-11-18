@@ -40,6 +40,9 @@ const AREAS = {
     known: [
       ['E21', /Claude Code is updating/i, () => 'Claude Code is updating. Ask me again in a minute.'],
       ['E22', /not logged in|NotLoggedIn|\b401\b|unauthori[sz]ed|invalid_grant|token refresh failed|authentication_error|(?:invalid|incorrect).{0,6}api.?key/i, (c) => `My ${c.who} login stopped working. Sign in again.`, false, 'model'],
+      // A rate limit that quotes its numbers (Groq, OpenAI: "... tokens per minute (TPM): Limit 7000, Requested 14362"). Before the
+      // credit line: these messages often end with an upgrade link that says "billing".
+      ['E2A', /rate_limit_exceeded|(?:tokens|requests) per (?:minute|day)|free-models-per-day/i, (c) => c.rate ?? `${c.who} says: too many requests. Wait a minute.`, false, 'model'],
       ['E23', /insufficient_quota|credit balance|billing|payment required|\b402\b/i, () => 'This account is out of credit. Top up or switch model.', false, 'model'],
       ['E24', /usage.?limit|quota|rate.?limit|\b429\b|too many requests/i, () => "I've hit this model's usage limit. Pick another model.", false, 'model'],
       ['E25', /context.{0,20}(?:length|window)|prompt is too long|too many tokens|maximum context|exceeds the available context/i, () => 'This chat got too long. Start a new one.'],
@@ -110,10 +113,19 @@ const upper = (s) => s.charAt(0).toUpperCase() + s.slice(1);
 
 // A long name would wrap the row: say the line without one.
 const limit = (a, copy) => (!a.guide ? MAX_LINE : copy ? GUIDE_LINKED : GUIDE_LINE);
-const fitter = (ctx) => {
-  const c = { who: name(ctx.who, 'the AI'), store: name(ctx.store, '') };
-  return (line, max) => { const t = line(c); return upper(t.length <= max ? t : line({ who: 'the AI', store: '' })); };
+const fitter = (ctx, rate) => {
+  const c = { who: name(ctx.who, 'the AI'), store: name(ctx.store, ''), rate };
+  return (line, max) => { const t = line(c); return upper(t.length <= max ? t : line({ who: 'the AI', store: '', rate })); };
 };
+
+// What a rate-limit message says about its limit, as a short line: "Groq allows 7000 input tokens/min; I sent 14362."
+const KINDS = { ITPM: 'input tokens/min', OTPM: 'output tokens/min', TPM: 'tokens/min', RPM: 'requests/min', TPD: 'tokens/day', RPD: 'requests/day' };
+function rateLine(summary, who) {
+  if (/free-models-per-day/i.test(summary)) return `${who}'s free models are used up for today.`;
+  const m = /\b(ITPM|OTPM|TPM|RPM|TPD|RPD)\)?:?\s*Limit\s+(\d+)(?:,\s*Used\s+\d+)?(?:,\s*Requested\s+(\d+))?/i.exec(summary);
+  if (!m) return null;
+  return `${who} allows ${m[2]} ${KINDS[m[1].toUpperCase()]}${m[3] ? `; I sent ${m[3]}` : ''}.`;
+}
 
 const FIELDS = ['code', 'reason', 'status', 'detail', 'returning', 'retried', 'callbackToExchangeMs'];
 // What went wrong, in full: each error in the chain as "Name: message [fields]", then the stack. Patterns read the
@@ -140,7 +152,7 @@ function describe(err) {
 export function explain(area, err, ctx = {}) {
   const a = AREAS[area] ?? AREAS.reply;
   const { summary, raw } = describe(err);
-  const fit = fitter(ctx);
+  const fit = fitter(ctx, rateLine(summary, name(ctx.who, 'the AI')) ?? undefined);
   for (const [code, spot, line, copy = false, where = null] of a.known) {
     if (typeof spot === 'function' ? spot(err, summary) : spot.test(summary)) return { code, text: fit(line, limit(a, copy)), known: true, copy, where, raw };
   }

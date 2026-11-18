@@ -155,4 +155,12 @@ assert.match(detailsText(undefined), /^Roamies error \? \(\?\)/, 'nothing to rep
   assert.deepEqual(side.split('\n').flatMap((l, i) => (/\b(const|let|var)\s+problem\b/.test(l) ? [i + 1] : [])), [], 'nothing in sidekick.mjs hides problem()');
 }
 
+// A rate limit that quotes its numbers says them (Groq's message also ends with a "billing" upgrade link: not a credit problem).
+{
+  const groq = new Error('Request too large for model `x` on input tokens per minute (ITPM): Limit 7000, Requested 14362, please reduce. Upgrade at https://console.groq.com/settings/billing');
+  assert.equal(explain('reply', groq, { who: 'Groq' }).text, 'Groq allows 7000 input tokens/min; I sent 14362.');
+  assert.equal(explain('reply', new Error('Rate limit exceeded: free-models-per-day.'), { who: 'OpenRouter' }).code, 'E2A');
+  assert.equal(explain('reply', new Error('insufficient_quota: check billing'), { who: 'OpenAI' }).code, 'E23', 'a real credit error still says so');
+}
+
 console.log('errors tests: passed');
