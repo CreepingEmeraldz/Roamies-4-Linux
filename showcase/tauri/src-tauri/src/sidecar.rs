@@ -64,9 +64,10 @@ pub(crate) fn spawn_sidecar(app: &AppHandle) {
     cmd.env("ROAMIES_EXE", std::env::current_exe().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default());
     #[cfg(target_os = "linux")]
     cmd.env("ROAMIES_SESSION", crate::linux::session().name()).env("ROAMIES_LAUNCH", crate::linux::launch_command());
-    // niri: the pointer helper gives the cursor's position on Wayland (pointer.rs), so the Cursor size is offered.
+    // Layer-shell Wayland: the Cursor size is offered. The overlay sees the pointer over its own drawings (the marks are
+    // its own surface), and on niri with PipeWire 1.4.8+ the pointer helper (pointer.rs) gives the position everywhere.
     #[cfg(target_os = "linux")]
-    if crate::linux::native_wayland() && crate::pointer::available() {
+    if crate::linux::native_wayland() {
         cmd.env("ROAMIES_POINTER", "1");
     }
     if let Some(dir) = script.parent() {
