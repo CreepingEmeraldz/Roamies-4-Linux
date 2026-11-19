@@ -654,7 +654,9 @@
       if (gone && blank && now - last < 100) { nap = setTimeout(() => { nap = 0; requestAnimationFrame(frame); }, 100 - (now - last)); return; }
       // On a 120 Hz screen only a moving cursor being followed (or a drag) needs every frame; the rest runs at 60.
       const fast = list.some((o) => o.c.mover.dragging || (o.c.mover.drive && now - pointer.last < 150));
-      skip = !gone && !skip && now - last < 12 && !fast;
+      // Linux: 30 a second unless dragged or following the cursor. The update and the repaint are what the idle CPU goes on,
+      // and the animation steps are capped at 1/30 s anyway, so the extra frames only cost battery.
+      skip = !gone && !skip && now - last < (window.ROAMIE_LINUX ? 24 : 12) && !fast;
       if (skip) { requestAnimationFrame(frame); return; }
       const dt = Math.min(gone ? 0.25 : 1 / 30, (now - last) / 1000);
       last = now;
