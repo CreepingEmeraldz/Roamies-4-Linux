@@ -86,7 +86,7 @@ export const hasHands = (platform, hands) => platform === 'darwin' || !!hands;
 
 /** Ask About an Area (the snap shortcut and menu item): the helper's area selection, on macOS and Windows.
  *  Linux has no hands helper yet, so none of the three below. */
-export const canSnap = (platform, hands) => platform === 'darwin' || (platform === 'win32' && !!hands);
+export const canSnap = (platform, hands) => platform === 'darwin' || (platform === 'win32' && !!hands) || platform === 'linux';
 
 /** Circling something while holding the talk keys: the voice helper draws it, on macOS and Windows. */
 export const canCircle = (platform) => platform === 'darwin' || platform === 'win32';
