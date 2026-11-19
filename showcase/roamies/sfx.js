@@ -132,20 +132,33 @@
     expand: (X, t) => { [0, 1, 2].forEach((i) => tone(X, t + i * 0.035, { wave: 'p12', f0: 700 + i * 260, dur: 0.04, vol: 0.14 })); },
   };
 
-  const start = () => { if (!live) { const ac = new AudioContext(); live = rig(ac, ac.destination); live.out.gain.value = LEVEL * volume; } live.ac.resume(); unlocked = true; };
+  // Linux (WebKitGTK): an open audio context keeps its audio threads busy even in silence (see voice-out.js), so it is
+  // paused 4 s after the last sound and started again by the next one.
+  let napT = 0;
+  const nap = () => {
+    if (!window.ROAMIE_LINUX) return;
+    clearTimeout(napT);
+    napT = setTimeout(() => { if (live && live.ac.state === 'running') live.ac.suspend().catch(() => {}); }, 4000);
+  };
+  const start = () => { if (!live) { const ac = new AudioContext(); live = rig(ac, ac.destination); live.out.gain.value = LEVEL * volume; } live.ac.resume(); unlocked = true; nap(); };
   if (window.ROAMIE_AUTOSOUND) start();
   addEventListener('pointerdown', start, { capture: true });
   addEventListener('keydown', start, { capture: true });
 
   R.sfx = {
     names: Object.keys(SOUNDS),
-    play(name, arg) {
+    play(name, arg, again) {
       const fn = SOUNDS[name];
+      if (fn && enabled && unlocked && live && live.ac.state === 'suspended' && !again && window.ROAMIE_LINUX) {
+        live.ac.resume().then(() => R.sfx.play(name, arg, true)).catch(() => {});
+        return;
+      }
       if (!fn || !enabled || !unlocked || !live || live.ac.state !== 'running') return;
       const now = live.ac.currentTime;
       if (now - (last[name] ?? -1) < (GAP[name] ?? 0.09)) return;
       last[name] = now;
       fn(live, now + 0.005, arg);
+      nap();
     },
     // Offline render, used to check length and loudness of each sound.
     async render(name, secs = 1.2, arg) {

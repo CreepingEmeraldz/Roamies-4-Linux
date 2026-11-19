@@ -33,7 +33,19 @@
       out.connect(meter); meter.connect(vol); vol.connect(ac.destination);
     }
     if (ac.state !== 'running') ac.resume().catch(() => {});
+    nap();
     return ac;
+  };
+  // Linux (WebKitGTK): an audio context that is open keeps its audio threads busy even in silence (about 8% of a core on
+  // a laptop). 6 s after the last sound, with nothing playing or queued, it is paused; ctx() starts it again.
+  let napT = 0;
+  const nap = () => {
+    if (!ADAPT) return;
+    clearTimeout(napT);
+    napT = setTimeout(() => {
+      if (ac && ac.state === 'running' && !live.length && ac.currentTime > endAt + 0.5) ac.suspend().catch(() => {});
+      else if (ac && ac.state === 'running') nap();
+    }, 6000);
   };
 
   const pcm = (b64, rate) => {
@@ -68,6 +80,7 @@
     s.start(at); endAt = at + b.duration; secs += b.duration; sched.push([at, b.duration]);
     live.push(s);
     s.onended = () => { live = live.filter((x) => x !== s); };
+    nap();
   };
 
   let vol = null, volume = 1;
