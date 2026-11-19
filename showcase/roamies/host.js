@@ -56,7 +56,8 @@
     setInterval(() => {
       if (!window.Roamie?.hitTest) return;
       // Resting (nothing for 15 s, see core.js): look about once a second instead of eight times, the sampling is not free.
-      if (performance.now() - (Roamie.lastActive ?? 0) > 15000 && ++tick % 8) return;
+      // With nothing clickable on screen (the last list sent was empty) not at all: a message or pointer move wakes it.
+      if (performance.now() - (Roamie.lastActive ?? 0) > 15000 && ((sent === '' && sentAt > 0) || ++tick % 8)) return;
       const rects = [];
       const grown = (r) => rects.push(Math.floor(r[0]) - 8, Math.floor(r[1]) - 8, Math.ceil(r[2]) + 16, Math.ceil(r[3]) + 16);
       for (const r of Roamie.inkRects?.() ?? []) grown(r);
