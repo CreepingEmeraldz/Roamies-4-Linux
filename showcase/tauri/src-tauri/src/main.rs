@@ -331,6 +331,16 @@ fn to_sidekick_buddy(app: &AppHandle, msg: &Value) {
 
 #[tauri::command]
 fn sidecar_send(app: AppHandle, msg: Value) {
+    // The page's own timing report (prof.js, only with ROAMIES_PROFILE=1): to a log file, not to the agent.
+    if msg.get("type").and_then(|t| t.as_str()) == Some("prof") {
+        use std::io::Write;
+        if let Some(p) = std::env::var_os("HOME").and_then(|h| log_path(std::path::Path::new(&h), "profile.log")) {
+            if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(p) {
+                let _ = writeln!(f, "{msg}");
+            }
+        }
+        return;
+    }
     to_sidecar(&app, &msg);
 }
 
@@ -1152,6 +1162,7 @@ fn build_overlays(app: &AppHandle) -> tauri::Result<()> {
         // draws a strip by an auto-hidden taskbar, #58).
         #[cfg(target_os = "linux")]
         let init = format!("{init}window.ROAMIE_LINUX={:?};", linux::session().name());
+        let init = if std::env::var_os("ROAMIES_PROFILE").is_some() { format!("{init}window.ROAMIE_PROF=true;") } else { init };
         #[cfg(not(target_os = "macos"))]
         let size = tauri::LogicalSize::new(size.width, size.height - 1.0);
         let label = format!("overlay-{gen}-{i}");

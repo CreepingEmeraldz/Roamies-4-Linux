@@ -629,7 +629,7 @@
     // Linux: after 15 s with nothing happening (no message from the app, no pointer movement, no drag) the loop ticks once
     // a second instead of every frame: a resting Roamie costs next to nothing. Any message from the app wakes it at once.
     R.lastActive = performance.now();
-    R.wake = () => { R.lastActive = performance.now(); if (nap) { clearTimeout(nap); nap = 0; requestAnimationFrame(frame); } };
+    R.wake = () => { R.wakes = (R.wakes || 0) + 1; R.lastActive = performance.now(); if (nap) { clearTimeout(nap); nap = 0; requestAnimationFrame(frame); } };
     const replay = (now, dt) => {
       if (!trail.length) return;
       const at = now - LAG;
