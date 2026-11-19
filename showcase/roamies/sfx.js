@@ -141,7 +141,8 @@
     napT = setTimeout(() => { if (live && live.ac.state === 'running') live.ac.suspend().catch(() => {}); }, 4000);
   };
   const start = () => { if (!live) { const ac = new AudioContext(); live = rig(ac, ac.destination); live.out.gain.value = LEVEL * volume; } live.ac.resume(); unlocked = true; nap(); };
-  if (window.ROAMIE_AUTOSOUND) start();
+  // Linux: the context is made by the first sound that plays, not at start (an open one costs CPU even when silent).
+  if (window.ROAMIE_AUTOSOUND && !window.ROAMIE_LINUX) start();
   addEventListener('pointerdown', start, { capture: true });
   addEventListener('keydown', start, { capture: true });
 
@@ -149,6 +150,11 @@
     names: Object.keys(SOUNDS),
     play(name, arg, again) {
       const fn = SOUNDS[name];
+      if (fn && enabled && !live && !again && window.ROAMIE_LINUX && window.ROAMIE_AUTOSOUND) {
+        start();
+        live.ac.resume().then(() => R.sfx.play(name, arg, true)).catch(() => {});
+        return;
+      }
       if (fn && enabled && unlocked && live && live.ac.state === 'suspended' && !again && window.ROAMIE_LINUX) {
         live.ac.resume().then(() => R.sfx.play(name, arg, true)).catch(() => {});
         return;
