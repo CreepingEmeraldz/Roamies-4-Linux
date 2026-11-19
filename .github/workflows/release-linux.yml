@@ -1,0 +1,85 @@
+# Linux-only release for this fork: tag a version (e.g. `git tag v0.1.44-linux1 && git push origin v0.1.44-linux1`) or
+# run it by hand from the Actions tab (it then builds the version in tauri.conf.json and tags it v<version>-linux).
+# Builds the AppImage (plus .deb and .rpm) unsigned and attaches them to a published GitHub release.
+# No Apple, Windows or updater-signing secrets are needed: update bundles are switched off for this build.
+name: Release (Linux)
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  linux:
+    # Ubuntu 24.04: ONNX Runtime's prebuilt library (the voice helper) needs glibc 2.38.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+        working-directory: showcase/tauri
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: showcase/tauri/sidecar/package-lock.json
+
+      - name: Install sidecar dependencies
+        working-directory: showcase/tauri/sidecar
+        run: npm ci
+
+      - name: Test sidecar
+        working-directory: showcase/tauri/sidecar
+        run: npm test
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-gnu
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            showcase/tauri/src-tauri -> target
+            showcase/tauri/src-tauri/voice-win -> target
+          key: x86_64-unknown-linux-gnu
+
+      - name: Install the Tauri CLI
+        run: cargo install tauri-cli --version "^2" --locked
+
+      # Tauri's Linux build dependencies, ALSA for the voice helper, gtk-layer-shell for the overlay, and patchelf with
+      # the GStreamer plugins the AppImage bundles.
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev libasound2-dev libgtk-layer-shell-dev libpipewire-0.3-dev clang patchelf libfuse2t64 gstreamer1.0-plugins-base gstreamer1.0-plugins-good
+
+      # createUpdaterArtifacts is switched off: it needs the upstream project's private signing key, which a fork doesn't have.
+      - name: Build
+        env:
+          TAURI_BUNDLES: appimage,deb,rpm
+        run: ./build.sh release --target x86_64-unknown-linux-gnu --config '{"bundle":{"createUpdaterArtifacts":false}}'
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="$GITHUB_REF_NAME"
+          if [[ "$GITHUB_REF_TYPE" != tag ]]; then
+            TAG="v$(sed -n 's/^  "version": "\(.*\)",/\1/p' src-tauri/tauri.conf.json | head -1)-linux"
+          fi
+          B=src-tauri/target/x86_64-unknown-linux-gnu/release/bundle
+          files=($B/appimage/*.AppImage $B/deb/*.deb $B/rpm/*.rpm)
+          ls -la "${files[@]}"
+          gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1 \
+            || gh release create "$TAG" -R "$GITHUB_REPOSITORY" --title "Roamies $TAG (Linux)" --generate-notes --target "$GITHUB_SHA"
+          gh release upload "$TAG" -R "$GITHUB_REPOSITORY" --clobber "${files[@]}"
