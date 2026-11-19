@@ -32,6 +32,7 @@
   const setHot = (h) => { if (!LINUX && h !== hot) { hot = h; invoke('set_hot', { hot: h }).catch(() => { hot = null; }); } };
   window.__roamiePtr = (x, y, t) => {
     if (!window.Roamie?.ptr) return;
+    Roamie.wake?.();
     cursor = [x, y];
     Roamie.ink?.ptr(x, y);
     Roamie.askBar?.ptr(x, y);

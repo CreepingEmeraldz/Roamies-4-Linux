@@ -626,7 +626,10 @@
     canvas.addEventListener('pointercancel', () => { if (down) down.o.c.mover.dragging = false; down = null; });
 
     let last = performance.now(), skip = false, blank = false, nap = 0, lastSig = '';
-    R.wake = () => { if (nap) { clearTimeout(nap); nap = 0; requestAnimationFrame(frame); } };
+    // Linux: after 15 s with nothing happening (no message from the app, no pointer movement, no drag) the loop ticks once
+    // a second instead of every frame: a resting Roamie costs next to nothing. Any message from the app wakes it at once.
+    R.lastActive = performance.now();
+    R.wake = () => { R.lastActive = performance.now(); if (nap) { clearTimeout(nap); nap = 0; requestAnimationFrame(frame); } };
     const replay = (now, dt) => {
       if (!trail.length) return;
       const at = now - LAG;
@@ -652,6 +655,9 @@
       // closing bubbles) ticks, ten times a second, off the display clock. A host message wakes it at once.
       const gone = list.length > 0 && list.every((o) => o.c.gone && !o.c.mover.dragging);
       if (gone && blank && now - last < 100) { nap = setTimeout(() => { nap = 0; requestAnimationFrame(frame); }, 100 - (now - last)); return; }
+      if (window.ROAMIE_LINUX && !gone && now - Math.max(R.lastActive, pointer.last || 0) > 15000 && !list.some((o) => o.c.mover.dragging || o.c.mover.drive) && now - last < 1000) {
+        nap = setTimeout(() => { nap = 0; requestAnimationFrame(frame); }, 1000 - (now - last)); return;
+      }
       // On a 120 Hz screen only a moving cursor being followed (or a drag) needs every frame; the rest runs at 60.
       const fast = list.some((o) => o.c.mover.dragging || (o.c.mover.drive && now - pointer.last < 150));
       // Linux: 30 a second unless dragged or following the cursor. The update and the repaint are what the idle CPU goes on,
