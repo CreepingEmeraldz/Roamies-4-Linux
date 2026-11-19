@@ -42,7 +42,7 @@ const AREAS = {
       ['E22', /not logged in|NotLoggedIn|\b401\b|unauthori[sz]ed|invalid_grant|token refresh failed|authentication_error|(?:invalid|incorrect).{0,6}api.?key/i, (c) => `My ${c.who} login stopped working. Sign in again.`, false, 'model'],
       // A rate limit that quotes its numbers (Groq, OpenAI: "... tokens per minute (TPM): Limit 7000, Requested 14362"). Before the
       // credit line: these messages often end with an upgrade link that says "billing".
-      ['E2A', /rate_limit_exceeded|(?:tokens|requests) per (?:minute|day)|free-models-per-day/i, (c) => c.rate ?? `${c.who} says: too many requests. Wait a minute.`, false, 'model'],
+      ['E2B', /rate_limit_exceeded|(?:tokens|requests) per (?:minute|day)|free-models-per-day/i, (c) => c.rate ?? `${c.who} says: too many requests. Wait a minute.`, false, 'model'],
       ['E23', /insufficient_quota|credit balance|billing|payment required|\b402\b/i, () => 'This account is out of credit. Top up or switch model.', false, 'model'],
       ['E24', /usage.?limit|quota|rate.?limit|\b429\b|too many requests/i, () => "I've hit this model's usage limit. Pick another model.", false, 'model'],
       ['E25', /context.{0,20}(?:length|window)|prompt is too long|too many tokens|maximum context|exceeds the available context/i, () => 'This chat got too long. Start a new one.'],
