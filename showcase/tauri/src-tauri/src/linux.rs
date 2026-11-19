@@ -472,6 +472,116 @@ pub(crate) fn screenshot(app: &AppHandle, id: Value, file: String) {
     });
 }
 
+// ---------- area select ----------
+// `roamies --snap` (the sidecar's areaSnap): the screen is captured as for a screenshot, the overlays show it frozen and
+// dimmed (host.js startPick), the user drags a box, and the part under it is cropped from the full-size picture into
+// `file`. One pick at a time.
+struct Pick {
+    id: Value,
+    full: PathBuf,
+    bounds: [f64; 4],
+    file: String,
+}
+static PICK: std::sync::Mutex<Option<Pick>> = std::sync::Mutex::new(None);
+
+pub(crate) fn select(app: &AppHandle, id: Value, file: String) {
+    let fail = |app: &AppHandle, id: &Value, e: String| crate::to_sidecar(app, &json!({ "type": "select_done", "id": id, "ok": false, "error": e }));
+    if PICK.lock().unwrap().is_some() {
+        fail(app, &id, "An area is already being picked.".into());
+        return;
+    }
+    const CLEAR: Duration = Duration::from_millis(150);
+    fade_overlays(app, 0.0);
+    let app = app.clone();
+    if session() == Session::X11 {
+        gtk::glib::timeout_add_local_once(CLEAR, move || {
+            let shot = grab_root();
+            fade_overlays(&app, 1.0);
+            if let Err(e) = shot.and_then(|p| begin_pick(&app, &id, file, &p)) {
+                fail(&app, &id, e);
+            }
+        });
+        return;
+    }
+    std::thread::spawn(move || {
+        std::thread::sleep(CLEAR);
+        let shot = portal_screenshot();
+        let app2 = app.clone();
+        let _ = app.run_on_main_thread(move || fade_overlays(&app2, 1.0));
+        let r = shot.and_then(|path| {
+            let loaded = gtk::gdk_pixbuf::Pixbuf::from_file(&path).map_err(|e| e.to_string());
+            remove_portal_file(&path);
+            loaded.and_then(|p| begin_pick(&app, &id, file, &p))
+        });
+        if let Err(e) = r {
+            let app2 = app.clone();
+            let _ = app.run_on_main_thread(move || fail(&app2, &id, e));
+        }
+    });
+}
+
+/// Keeps the full-size picture on disk for the crop, and shows the overlays a screen-sized copy to drag over.
+fn begin_pick(app: &AppHandle, id: &Value, file: String, shot: &gtk::gdk_pixbuf::Pixbuf) -> Result<(), String> {
+    use base64::Engine;
+    let bounds = desktop_bounds(app);
+    let full = std::env::temp_dir().join(format!("roamies-pick-{}.png", std::process::id()));
+    shot.savev(&full, "png", &[]).map_err(|e| e.to_string())?;
+    let (w, h) = (bounds[2].round().max(1.0) as i32, bounds[3].round().max(1.0) as i32);
+    let preview = shot.scale_simple(w, h, gtk::gdk_pixbuf::InterpType::Bilinear).ok_or("the screenshot couldn't be resized")?;
+    let jpeg = preview.save_to_bufferv("jpeg", &[("quality", "80")]).map_err(|e| e.to_string())?;
+    let image = format!("data:image/jpeg;base64,{}", base64::engine::general_purpose::STANDARD.encode(jpeg));
+    *PICK.lock().unwrap() = Some(Pick { id: id.clone(), full, bounds, file });
+    let (app2, bounds) = (app.clone(), bounds);
+    let _ = app.run_on_main_thread(move || crate::to_overlays(&app2, &json!({ "kind": "pick", "image": image, "bounds": bounds })));
+    Ok(())
+}
+
+/// The page's answer: the box in desktop points, or None (cancelled).
+pub(crate) fn select_done(app: &AppHandle, rect: Option<Vec<f64>>) {
+    let Some(pick) = PICK.lock().unwrap().take() else { return };
+    crate::to_overlays(app, &json!({ "kind": "pick_end" }));
+    let reply = |app: &AppHandle, body: Value| {
+        let mut msg = json!({ "type": "select_done", "id": pick.id });
+        msg.as_object_mut().unwrap().extend(body.as_object().unwrap().clone());
+        crate::to_sidecar(app, &msg);
+    };
+    let Some([x, y, w, h]) = rect.and_then(|r| <[f64; 4]>::try_from(r).ok()).filter(|r| r.iter().all(|v| v.is_finite())) else {
+        let _ = std::fs::remove_file(&pick.full);
+        reply(app, json!({ "ok": false, "cancelled": true }));
+        return;
+    };
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let r = crop_pick(&pick, [x, y, w, h]);
+        let _ = std::fs::remove_file(&pick.full);
+        let app2 = app.clone();
+        let _ = app.run_on_main_thread(move || {
+            let mut msg = json!({ "type": "select_done", "id": pick.id });
+            match r {
+                Ok(()) => msg["ok"] = json!(true),
+                Err(e) => {
+                    msg["ok"] = json!(false);
+                    msg["error"] = json!(e);
+                }
+            }
+            crate::to_sidecar(&app2, &msg);
+        });
+    });
+}
+
+/// The box (desktop points) cut out of the full-size picture, which covers the whole desktop.
+fn crop_pick(pick: &Pick, [x, y, w, h]: [f64; 4]) -> Result<(), String> {
+    let shot = gtk::gdk_pixbuf::Pixbuf::from_file(&pick.full).map_err(|e| e.to_string())?;
+    let [bx, by, bw, bh] = pick.bounds;
+    let (sx, sy) = (shot.width() as f64 / bw.max(1.0), shot.height() as f64 / bh.max(1.0));
+    let left = (((x - bx) * sx).round() as i32).clamp(0, shot.width() - 1);
+    let top = (((y - by) * sy).round() as i32).clamp(0, shot.height() - 1);
+    let width = ((w * sx).round() as i32).clamp(1, shot.width() - left);
+    let height = ((h * sy).round() as i32).clamp(1, shot.height() - top);
+    let part = shot.new_subpixbuf(left, top, width, height);
+    part.savev(&pick.file, "png", &[]).map_err(|e| e.to_string())
+}
+
 fn remove_portal_file(path: &Path) {
     if path.is_file() {
         let _ = std::fs::remove_file(path);
@@ -586,6 +696,33 @@ pub(crate) fn open_releases_page() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_box_is_cut_from_the_full_size_picture_by_desktop_points() {
+        use gtk::gdk_pixbuf::{Colorspace, Pixbuf};
+        // A 400x200 picture of a desktop 200x100 points big at (100, 50): two pixels a point. Left half red, right half blue.
+        let shot = Pixbuf::new(Colorspace::Rgb, false, 8, 400, 200).unwrap();
+        for x in 0..400 {
+            for y in 0..200 {
+                shot.put_pixel(x, y, if x < 200 { 255 } else { 0 }, 0, if x < 200 { 0 } else { 255 }, 255);
+            }
+        }
+        let dir = std::env::temp_dir();
+        let (full, out) = (dir.join("roamies-test-full.png"), dir.join("roamies-test-out.png"));
+        shot.savev(&full, "png", &[]).unwrap();
+        let pick = Pick { id: Value::Null, full: full.clone(), bounds: [100.0, 50.0, 200.0, 100.0], file: out.to_string_lossy().into_owned() };
+        // The right half of the desktop: x 200..300, all of its height.
+        crop_pick(&pick, [200.0, 50.0, 100.0, 100.0]).unwrap();
+        let got = Pixbuf::from_file(&out).unwrap();
+        assert_eq!((got.width(), got.height()), (200, 200));
+        assert_eq!(unsafe { got.pixels()[..3].to_vec() }, vec![0, 0, 255], "the right half is blue");
+        // Past the edges: kept inside the picture.
+        crop_pick(&pick, [250.0, 100.0, 500.0, 500.0]).unwrap();
+        let got = Pixbuf::from_file(&out).unwrap();
+        assert_eq!((got.width(), got.height()), (100, 100));
+        let _ = std::fs::remove_file(full);
+        let _ = std::fs::remove_file(out);
+    }
 
     #[test]
     fn the_overlay_is_unmanaged_on_cosmic_only() {

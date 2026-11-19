@@ -27,6 +27,7 @@
   window.__roamieBuddy = (m) => { Roamie.wake?.(); Roamie.buddy.onEvent?.(m); };
   // handsBusy: Roamies is acting in another app (it may take the real cursor), so clicks always go through.
   let hot = null, cursor = null, handsBusy = false;
+  let pick = null; // Linux: the area picker is up (see startPick)
   // Linux ("x11" or "wayland", set by the shell): clicks are let through by region instead (below).
   const LINUX = !!window.ROAMIE_LINUX;
   const setHot = (h) => { if (!LINUX && h !== hot) { hot = h; invoke('set_hot', { hot: h }).catch(() => { hot = null; }); } };
@@ -57,7 +58,7 @@
       if (!window.Roamie?.hitTest) return;
       // Resting (nothing for 15 s, see core.js): look about once a second instead of eight times, the sampling is not free.
       // With nothing clickable on screen (the last list sent was empty) not at all: a message or pointer move wakes it.
-      if (performance.now() - (Roamie.lastActive ?? 0) > 15000 && ((sent === '' && sentAt > 0) || ++tick % 8)) return;
+      if (!pick && performance.now() - (Roamie.lastActive ?? 0) > 15000 && ((sent === '' && sentAt > 0) || ++tick % 8)) return;
       const rects = [];
       const grown = (r) => rects.push(Math.floor(r[0]) - 8, Math.floor(r[1]) - 8, Math.ceil(r[2]) + 16, Math.ceil(r[3]) + 16);
       for (const r of Roamie.inkRects?.() ?? []) grown(r);
@@ -71,6 +72,7 @@
       // Sampled a little past the canvas: hit areas can reach beyond what's drawn.
       const box = Roamie.hitBox();
       if (box) rects.push(...Roamie.hitRects(Roamie.hitTest, [box[0] - 48, box[1] - 48, box[2] + 96, box[3] + 96]));
+      if (pick) { rects.length = 0; rects.push(0, 0, innerWidth, innerHeight); } // the picker takes every click
       const key = rects.join(','), now = performance.now();
       // Sent when it changes, and again every couple of seconds in case the window's shape was reset under it.
       if (key === sent && now - sentAt < 2000) return;
@@ -81,6 +83,65 @@
 
   let agent = null;
   const getAgent = () => (agent ??= Roamie.tiles?.find((t) => t.creature?.agent)?.creature.agent ?? null);
+
+  // ---------- area select (Linux): drag a box on the frozen screen ----------
+  // The shell took a screenshot and sent it with where it sits on the desktop (m.bounds, in the units of Roamie.origin).
+  // This overlay shows its part of it, dimmed; dragging picks the area, Esc or a click without dragging cancels. The
+  // answer goes to the shell (select_done) as a rectangle in desktop points, which crops the full-size picture.
+  const endPick = () => {
+    if (!pick) return;
+    clearTimeout(pick.timer);
+    removeEventListener('keydown', pick.key, true);
+    pick.el.remove();
+    pick = null;
+    typing(false);
+  };
+  const startPick = (m) => {
+    if (!Array.isArray(m.bounds) || typeof m.image !== 'string') return;
+    endPick();
+    Roamie.wake?.();
+    const [bx, by, bw, bh] = m.bounds, o = Roamie.origin ?? { x: 0, y: 0 };
+    const el = document.createElement('div');
+    el.tabIndex = -1;
+    Object.assign(el.style, { position: 'fixed', inset: '0', zIndex: '2147483647', cursor: 'crosshair', userSelect: 'none', touchAction: 'none', outline: 'none',
+      background: `#000 url("${m.image}") ${bx - o.x}px ${by - o.y}px / ${bw}px ${bh}px no-repeat` });
+    const dim = document.createElement('div');
+    Object.assign(dim.style, { position: 'absolute', inset: '0', background: 'rgba(0,0,0,.4)' });
+    const box = document.createElement('div');
+    Object.assign(box.style, { position: 'absolute', display: 'none', border: '2px solid #7df9e2', boxSizing: 'border-box', boxShadow: '0 0 0 100vmax rgba(0,0,0,.45)' });
+    const hint = document.createElement('div');
+    hint.textContent = 'Drag to choose an area  ·  Esc to cancel';
+    Object.assign(hint.style, { position: 'absolute', top: '18px', left: '50%', transform: 'translateX(-50%)', padding: '8px 14px', borderRadius: '10px', font: '600 13px system-ui, sans-serif', color: '#fff', background: 'rgba(0,0,0,.65)' });
+    el.append(dim, box, hint);
+    document.body.appendChild(el);
+    const finish = (rect) => { endPick(); invoke('select_done', { rect }).catch(() => {}); };
+    let from = null;
+    const area = (e) => { const x = Math.min(from.x, e.clientX), y = Math.min(from.y, e.clientY); return [x, y, Math.abs(e.clientX - from.x), Math.abs(e.clientY - from.y)]; };
+    el.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) { finish(null); return; }
+      from = { x: e.clientX, y: e.clientY };
+      el.setPointerCapture(e.pointerId);
+      dim.style.display = 'none'; hint.style.display = 'none';
+      Object.assign(box.style, { display: 'block', left: from.x + 'px', top: from.y + 'px', width: '0px', height: '0px' });
+    });
+    el.addEventListener('pointermove', (e) => {
+      if (!from) return;
+      const [x, y, w, h] = area(e);
+      Object.assign(box.style, { left: x + 'px', top: y + 'px', width: w + 'px', height: h + 'px' });
+    });
+    el.addEventListener('pointerup', (e) => {
+      if (!from) return;
+      const [x, y, w, h] = area(e);
+      from = null;
+      if (w < 8 || h < 8) { finish(null); return; } // a click, not a drag
+      finish([x + o.x, y + o.y, w, h]);
+    });
+    const key = (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finish(null); } };
+    addEventListener('keydown', key, true);
+    pick = { el, key, timer: setTimeout(() => finish(null), 90000) };
+    typing(true); // the keyboard, for Esc
+    setTimeout(() => el.focus(), 40);
+  };
 
   // ---------- typing: an input bubble, or the field beside the cursor ----------
   // The bubble (API keys, Allow/Decline, the area follow-up): a real (invisible) input collects keys, so paste, IME
@@ -543,6 +604,8 @@
       else { handsBusy = !!m.on; if (handsBusy) setHot(false); else hand?.end(); }
       return;
     }
+    if (m.kind === 'pick') { startPick(m); return; }
+    if (m.kind === 'pick_end') { endPick(); return; }
     // Launch (and the relaunch after an update): the capsule says hi when it's on, else the Roamie waves by the cursor.
     if (m.kind === 'greet') { if (notchOn()) N().hello(); else getAgent().act('wave'); return; }
     if (m.kind === 'intro') { if (capR()) N().say(m.text); else getAgent().intro(m.x, m.text); return; }

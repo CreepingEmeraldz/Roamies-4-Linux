@@ -344,6 +344,15 @@ fn sidecar_send(app: AppHandle, msg: Value) {
     to_sidecar(&app, &msg);
 }
 
+/// Linux: the area picker's answer (host.js): the box in desktop points, or none when it was cancelled.
+#[tauri::command]
+fn select_done(app: AppHandle, rect: Option<Vec<f64>>) {
+    #[cfg(target_os = "linux")]
+    linux::select_done(&app, rect);
+    #[cfg(not(target_os = "linux"))]
+    let _ = (app, rect);
+}
+
 /// The input bubble needs keystrokes: make the overlay key while typing, then hand focus back.
 #[tauri::command]
 fn set_typing(app: AppHandle, window: WebviewWindow, on: bool) {
@@ -1899,6 +1908,12 @@ fn handle_sidecar(app: &AppHandle, msg: Value) {
             }
         }
         #[cfg(target_os = "linux")]
+        Some("select") => {
+            if let Some(file) = msg.get("file").and_then(Value::as_str) {
+                linux::select(app, msg.get("id").cloned().unwrap_or(Value::Null), file.to_owned());
+            }
+        }
+        #[cfg(target_os = "linux")]
         Some("clipboard") => {
             if let Some(text) = msg.get("text").and_then(Value::as_str) {
                 linux::set_clipboard(text);
@@ -1957,11 +1972,11 @@ fn handle_sidecar(app: &AppHandle, msg: Value) {
     }
 }
 
-/// What a second launch asks the running app to do: `roamies --summon | --list | --talk | --ask | --panel`. They're
+/// What a second launch asks the running app to do: `roamies --summon | --list | --talk | --ask | --snap | --panel`. They're
 /// for binding to keys in the desktop's keyboard settings, the one kind of global shortcut Wayland lets every app
 /// have. None: a plain launch.
 fn cli_action(args: &[String]) -> Option<&'static str> {
-    const ACTIONS: [&str; 5] = ["summon", "list", "talk", "ask", "panel"];
+    const ACTIONS: [&str; 6] = ["summon", "list", "talk", "ask", "panel", "snap"];
     args.iter().skip(1).find_map(|a| ACTIONS.into_iter().find(|f| a.strip_prefix("--") == Some(*f)))
 }
 
@@ -1999,7 +2014,7 @@ fn main() {
         .manage(TalkChord(Mutex::new(vec!["control".into(), "option".into()])))
         .manage(VoiceModel(Mutex::new(None)))
         .manage(PermGuide(Mutex::new(None)))
-        .invoke_handler(tauri::generate_handler![buddy, ink_wait, set_hot, set_hit_rects, sidecar_send, set_typing, perm_status, perm_request, perm_guide, screen_check, open_settings, onboarding_finish, guide_close, panel_hide, esc_watch, relaunch, focus_guide, guide_aside, drag_window])
+        .invoke_handler(tauri::generate_handler![buddy, select_done, ink_wait, set_hot, set_hit_rects, sidecar_send, set_typing, perm_status, perm_request, perm_guide, screen_check, open_settings, onboarding_finish, guide_close, panel_hide, esc_watch, relaunch, focus_guide, guide_aside, drag_window])
         .on_menu_event(|app, e| match e.id.as_ref() {
             "quit" => app.exit(0),
             "restart" => spawn_sidecar(app),
@@ -2076,7 +2091,7 @@ mod tests {
     fn a_second_launch_says_what_it_wants_with_one_flag() {
         let args = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
         assert_eq!(cli_action(&args(&["roamies"])), None, "a plain launch");
-        for f in ["summon", "list", "talk", "ask", "panel"] {
+        for f in ["summon", "list", "talk", "ask", "panel", "snap"] {
             assert_eq!(cli_action(&args(&["/usr/bin/roamies", &format!("--{f}")])), Some(f));
         }
         assert_eq!(cli_action(&args(&["roamies", "--verbose", "--talk"])), Some("talk"), "other arguments are skipped");

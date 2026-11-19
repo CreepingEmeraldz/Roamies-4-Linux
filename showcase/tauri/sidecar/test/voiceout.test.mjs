@@ -20,7 +20,7 @@ function player(linux) {
     createBufferSource() { return { connect: noop, stop: noop, start(at) { starts.push({ at, d: this.buffer.duration }); } }; }
   }
   const window = { Roamie: {}, ...(linux ? { ROAMIE_LINUX: 'x11' } : {}) };
-  vm.runInNewContext(src, { window, AudioContext, Float32Array, Math, Set, atob: (s) => Buffer.from(s, 'base64').toString('latin1') });
+  vm.runInNewContext(src, { window, AudioContext, Float32Array, Math, Set, setTimeout: () => 0, clearTimeout: () => {}, atob: (s) => Buffer.from(s, 'base64').toString('latin1') });
   const out = window.Roamie.voiceOut;
   const at = (t, id) => { clock.t = t; out.handle({ id, rate: 44100, pcm: chunk }); return starts.at(-1).at - t; };
   // Silence between chunks, from the nth one on.

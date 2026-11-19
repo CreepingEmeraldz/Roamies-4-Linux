@@ -2392,6 +2392,7 @@ async function onCli(action) {
   logLine('cli', { action });
   if (action === 'list') return showList({ seconds: 20, toggle: true });
   if (action === 'ask') return onMenu('ask');
+  if (action === 'snap') return onMenu('snap');
   if (action !== 'talk' || !VOICE_OK) return;
   if (!config.voice) return say(`Voice is off. Switch it on on the Listening page in ${PANEL}.`, 'happy');
   if (!voiceReady()) return startVoiceDownload();
@@ -2648,6 +2649,13 @@ async function onMenu(id, via) {
 }
 
 // ---------- area snap (⌃⌥A) ----------
+// Linux: the shell freezes the screen and the overlay lets them drag a box over it (host.js); the part is saved to `file`.
+async function linuxSelect(file) {
+  const r = await shellCall({ type: 'select', file }, 120_000);
+  if (r.cancelled) return { cancelled: true };
+  if (!r.ok) throw new Error(r.error || 'The area picker did not work.');
+  return r;
+}
 // The next question (typed in the bubble, or spoken with the talk keys) is sent with the picture.
 let snap = null;
 async function areaSnap() {
@@ -2655,7 +2663,7 @@ async function areaSnap() {
   snapping = true;
   const file = path.join(os.tmpdir(), `sidekick-area-${Date.now()}.png`);
   try {
-    const res = await hands('select', file);
+    const res = LINUX ? await linuxSelect(file) : await hands('select', file);
     if (res.cancelled) return;
     await fitImage(file);
     snap = { image: await imageBlock(file, 'image/png'), at: Date.now() };
@@ -2921,7 +2929,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
   // Copy details: the last error someone saw, with the version and OS, scrubbed (never other text).
   else if (m.type === 'copy_problem') copyProblem(m.from).catch((e) => console.error('copy problem', e));
   // The shell's answers to what tools asked of it (Linux screenshots and copying).
-  else if (m.type === 'screenshot_done' || m.type === 'clipboard_done') shellAnswer(m);
+  else if (m.type === 'screenshot_done' || m.type === 'clipboard_done' || m.type === 'select_done') shellAnswer(m);
   // A second launch with a flag (roamies --talk and friends, bound to keys on Wayland); --summon and --panel the shell does itself.
   else if (m.type === 'cli') onCli(String(m.action ?? '')).catch((e) => console.error('cli', e));
   else if (m.type === 'login_item_status') onLoginStatus(m);
