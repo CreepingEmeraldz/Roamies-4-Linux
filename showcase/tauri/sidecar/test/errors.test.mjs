@@ -159,7 +159,7 @@ assert.match(detailsText(undefined), /^Roamies error \? \(\?\)/, 'nothing to rep
 {
   const groq = new Error('Request too large for model `x` on input tokens per minute (ITPM): Limit 7000, Requested 14362, please reduce. Upgrade at https://console.groq.com/settings/billing');
   assert.equal(explain('reply', groq, { who: 'Groq' }).text, 'Groq allows 7000 input tokens/min; I sent 14362.');
-  assert.equal(explain('reply', new Error('Rate limit exceeded: free-models-per-day.'), { who: 'OpenRouter' }).code, 'E2A');
+  assert.equal(explain('reply', new Error('Rate limit exceeded: free-models-per-day.'), { who: 'OpenRouter' }).code, 'E2B');
   assert.equal(explain('reply', new Error('insufficient_quota: check billing'), { who: 'OpenAI' }).code, 'E23', 'a real credit error still says so');
 }
 
