@@ -1506,6 +1506,18 @@ fn pump_cursor(app: AppHandle) {
         // on its own), instead of a cursor stuck in the corner.
         #[cfg(target_os = "linux")]
         if linux::native_wayland() {
+            // Where each screen sits in the layout, for the page to place what the model draws (it is given global
+            // points). Sent when the overlay is made, before its page has loaded, so again here every few seconds:
+            // without it the page thinks its screen starts at 0, 0 and a screen at x=1280 draws 1280 points too far right.
+            if n % 240 == 1 {
+                for (label, w) in app.webview_windows() {
+                    if is_overlay(&label) {
+                        if let Ok(Some(mon)) = w.current_monitor() {
+                            let _ = w.eval(safe_js(&mon));
+                        }
+                    }
+                }
+            }
             let Some((count, gx, gy)) = pointer::since(helper_seen) else { continue };
             helper_seen = count;
             let t = start.elapsed().as_secs_f64() * 1000.0;
