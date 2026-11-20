@@ -10,6 +10,13 @@
   <strong>A little buddy that lives on your screen and keeps you on track.</strong>
 </p>
 
+> [!NOTE]
+> **This is a Linux-focused fork** of [KenKaiii/Roamies](https://github.com/KenKaiii/Roamies), made so Roamies works properly on
+> Linux, especially on tiling Wayland compositors (niri, sway, Hyprland). It follows upstream's releases and adds a
+> layer-shell overlay, "ask about an area", much lower idle battery use, quicker shortcuts and fixes for several AI providers.
+> Linux builds are on [this repo's Releases](https://github.com/CreepingEmeraldz/Roamies-4-Linux/releases). Everything about it is in
+> **[docs/LINUX.md](docs/LINUX.md)**. The badges and links further down are upstream's.
+
 <p align="center">
   <a href="https://github.com/KenKaiii/Roamies/releases/latest"><img src="https://img.shields.io/github/v/release/KenKaiii/Roamies?style=for-the-badge&label=Download&color=78ffe2" alt="Roamies desktop release"></a>
   <a href="https://github.com/KenKaiii/Roamies/stargazers"><img src="https://img.shields.io/github/stars/KenKaiii/Roamies?style=for-the-badge&label=Stars&color=yellow" alt="Star Roamies on GitHub"></a>
@@ -98,11 +105,11 @@ quizzes you answer with a click.
 | Read windows and point | Yes                        | Yes                         | Points from screenshots only       |
 | Cards and diagrams     | Yes                        | Yes                         | Yes                                |
 | Click and type in apps | Yes                        | Yes                         | No                                 |
-| Ask about an area      | Yes (⌃⌥A)                  | Yes (Ctrl+Shift+A)          | No                                 |
+| Ask about an area      | Yes (⌃⌥A)                  | Yes (Ctrl+Shift+A)          | Yes, with a key you bind (this fork) |
 | Show or hide           | ⌃⌥S                        | Ctrl+Shift+S                | Ctrl+Alt+S, or a key you bind\*    |
 | Talk shortcut          | Hold ⌃⌥                    | Hold Ctrl+Alt               | Hold Ctrl+Alt, or a key you bind\* |
 | Type shortcut          | Tap ⌥⌘                     | Tap Ctrl+Shift              | Tap Ctrl+Shift, or a key you bind\* |
-| Updates itself         | Yes                        | Yes                         | AppImage only                      |
+| Updates itself         | Yes                        | Yes                         | No in this fork: download the new AppImage |
 
 <sub>\* On Wayland (the default on Ubuntu, Fedora and KDE), apps can't grab keys, so you bind Roamies' commands to keys
 in your desktop's keyboard settings. [Linux (beta)](#linux-beta) shows how.</sub>
@@ -130,10 +137,9 @@ Windows and Linux uses [NVIDIA Parakeet TDT 0.6B v3](https://huggingface.co/nvid
    **Windows:** [Download the latest release](https://github.com/KenKaiii/Roamies/releases/latest) and run `Roamies_<version>_x64-setup.exe` (the only file you need; the `.sig`, `.AppImage`, `.deb` and `.rpm` files
    aren't for Windows). Requires Windows 10 or later. It isn't code-signed yet, so Windows shows a SmartScreen warning the first time: click **More info**, then **Run anyway**.
 
-   **Linux (beta, x86_64):** [Download the latest release](https://github.com/KenKaiii/Roamies/releases/latest) and pick one:
+   **Linux (beta, x86_64):** [Download the latest release](https://github.com/CreepingEmeraldz/Roamies-4-Linux/releases/latest) (this fork's) and pick one:
    the `.deb` (Ubuntu, Debian, Mint, Pop!_OS: `sudo apt install ./Roamies_*_amd64.deb`), the `.rpm` (Fedora,
-   openSUSE: `sudo dnf install ./Roamies-*.x86_64.rpm`), or the `.AppImage` (any distro: `chmod +x` it and run it; only
-   the AppImage updates itself). Needs glibc 2.38 or later: Ubuntu 24.04, Fedora 39, Debian 13 or newer. See
+   openSUSE: `sudo dnf install ./Roamies-*.x86_64.rpm`), or the `.AppImage` (any distro: `chmod +x` it and run it). Needs glibc 2.38 or later: Ubuntu 24.04, Fedora 39, Debian 13 or newer. See
    [Linux (beta)](#linux-beta) for what works and how to set up shortcuts.
 
    **Development:** With Rust, Node.js 22+, the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) and, on macOS, the Xcode Command Line Tools installed:
@@ -212,7 +218,11 @@ far less than on macOS and Windows. Bug reports with your distro, desktop and se
 replies, memory and reminders, whole-screen screenshots and pointing at things on them, cards and diagrams, files and
 commands, Open at Login, and in-app updates for the AppImage (a `.deb` or `.rpm` copy opens the download page instead).
 
-**Not yet:** reading or working other apps, Ask About an Area, circling while talking, and the Cursor size on Wayland.
+**In this fork:** a layer-shell overlay on niri, sway, Hyprland and river, Ask About an Area (bind `roamies-ctl --snap`), quicker
+shortcuts through `~/.local/bin/roamies-ctl` and lower idle battery use. **[docs/LINUX.md](docs/LINUX.md)** has the details, the
+key bindings for niri, sway and Hyprland, and what has and hasn't been tested.
+
+**Not yet:** reading or working other apps, circling while talking, and the Roamie following the cursor over other apps on Wayland.
 
 **Wayland** (the default on Ubuntu, Fedora and KDE) doesn't let apps grab keys or see the pointer over other apps, so:
 
