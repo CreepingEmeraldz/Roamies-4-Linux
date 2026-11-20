@@ -175,6 +175,9 @@
       for (const c of [V, Lc]) c.restore();
       const sx = C[0] * DPR, sy = C[1] * DPR, sw = C[2] * DPR, sh = C[3] * DPR;
       V.save(); V.setTransform(1, 0, 0, 1, 0, 0);
+      // The blur spreads past the area just cleared; unclipped, that spill is never wiped and piles up with every frame
+      // into a teal haze left on the screen (on cards, and anywhere an old card or drawing was). Keep it inside the area.
+      V.beginPath(); V.rect(sx, sy, sw, sh); V.clip();
       if (hasFilter) { V.globalAlpha = 0.75; V.filter = `blur(${4 * DPR}px)`; V.drawImage(litC, sx, sy, sw, sh, sx, sy, sw, sh); V.filter = 'none'; V.globalAlpha = 1; }
       else { V.shadowColor = rgba(ACC, 0.75); V.shadowBlur = 8 * DPR; }
       V.drawImage(litC, sx, sy, sw, sh, sx, sy, sw, sh);
