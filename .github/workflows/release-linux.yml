@@ -81,5 +81,5 @@ jobs:
           files=($B/appimage/*.AppImage $B/deb/*.deb $B/rpm/*.rpm)
           ls -la "${files[@]}"
           gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1 \
-            || gh release create "$TAG" -R "$GITHUB_REPOSITORY" --title "Roamies $TAG (Linux)" --generate-notes --target "$GITHUB_SHA"
+            || gh release create "$TAG" -R "$GITHUB_REPOSITORY" --title "Roamies $TAG (Linux)" --notes "Install tesseract too (sudo apt install tesseract-ocr) so drawings land on the right words. Setup and shortcuts: docs/LINUX.md." --generate-notes --target "$GITHUB_SHA"
           gh release upload "$TAG" -R "$GITHUB_REPOSITORY" --clobber "${files[@]}"

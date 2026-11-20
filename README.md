@@ -141,6 +141,7 @@ Windows and Linux uses [NVIDIA Parakeet TDT 0.6B v3](https://huggingface.co/nvid
    the `.deb` (Ubuntu, Debian, Mint, Pop!_OS: `sudo apt install ./Roamies_*_amd64.deb`), the `.rpm` (Fedora,
    openSUSE: `sudo dnf install ./Roamies-*.x86_64.rpm`), or the `.AppImage` (any distro: `chmod +x` it and run it). Needs glibc 2.38 or later: Ubuntu 24.04, Fedora 39, Debian 13 or newer. See
    [Linux (beta)](#linux-beta) for what works and how to set up shortcuts.
+   **Also install tesseract** (`sudo apt install tesseract-ocr`, or your distro's `tesseract-ocr` / `tesseract` package): Roamies uses it to find the exact words and buttons it points at. Without it, drawings still work but can land off target.
 
    **Development:** With Rust, Node.js 22+, the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) and, on macOS, the Xcode Command Line Tools installed:
 
