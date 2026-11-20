@@ -2929,7 +2929,10 @@ createInterface({ input: process.stdin }).on('line', (line) => {
   // Copy details: the last error someone saw, with the version and OS, scrubbed (never other text).
   else if (m.type === 'copy_problem') copyProblem(m.from).catch((e) => console.error('copy problem', e));
   // The shell's answers to what tools asked of it (Linux screenshots and copying).
-  else if (m.type === 'screenshot_done' || m.type === 'clipboard_done' || m.type === 'select_done') shellAnswer(m);
+  else if (m.type === 'screenshot_done' || m.type === 'clipboard_done' || m.type === 'select_done') {
+    if (m.type === 'screenshot_done' && m.ms) logLine('screenshot_time', m.ms);
+    shellAnswer(m);
+  }
   // A second launch with a flag (roamies --talk and friends, bound to keys on Wayland); --summon and --panel the shell does itself.
   else if (m.type === 'cli') onCli(String(m.action ?? '')).catch((e) => console.error('cli', e));
   else if (m.type === 'login_item_status') onLoginStatus(m);

@@ -59,7 +59,7 @@ fs.writeFileSync(bad, '{"version":1,"messa');
 assert.equal((await S.loadLatestSession()).id, s.id, 'falls back past a corrupt file');
 assert.ok(fs.readdirSync(path.join(dir, 'sessions')).some((n) => n.startsWith('29991231-235959-zzzzzz.json.corrupt-')), 'corrupt file kept aside');
 
-// context trimming keeps the newest three screenshots only, and fits budget at a user boundary
+// context trimming keeps the newest screenshot only, and fits budget at a user boundary
 const many = [{ role: 'system', content: 'sys' }];
 for (let i = 0; i < 40; i++) {
   many.push({ role: 'user', content: `q${i} ` + 'x'.repeat(4000) });
@@ -69,7 +69,7 @@ for (let i = 0; i < 40; i++) {
 }
 const fit = S.fitContext(many, { budgetTokens: 20000 });
 const imgs = JSON.stringify(fit).split('"type":"image"').length - 1;
-assert.equal(imgs, 3, 'only the newest three screenshots stay');
+assert.equal(imgs, 1, 'only the newest screenshot stays');
 assert.equal(fit[0].role, 'system');
 assert.equal(fit[1].role, 'user', 'cut lands on a user message');
 assert.ok(fit.length < many.length, 'trimmed');
@@ -116,7 +116,7 @@ assert.ok(!left.includes('20200101-000000-aaaaa0.folded.jsonl'), "a pruned sessi
 assert.ok(left.includes(`${s.id}.folded.jsonl`), "a kept session's folded turns stay");
 console.log('store tests: all passed');
 
-// Area snaps (images in user messages) count too: only the newest three images overall survive.
+// Area snaps (images in user messages) count too: only the newest image survives, and the snap sent with the request being answered.
 {
   const S2 = await import(STORE + '?snap');
   const mix = [
@@ -133,7 +133,13 @@ console.log('store tests: all passed');
   ];
   const f = S2.fitContext(mix, { budgetTokens: 1e6 });
   const datas = JSON.stringify(f).match(/"data":"(\w+)"/g) ?? [];
-  assert.deepEqual(datas, ['"data":"T1"', '"data":"S2"', '"data":"S3"'], 'the newest three images are kept, snaps included');
+  assert.deepEqual(datas, ['"data":"S3"'], 'only the newest image is kept');
+  // A snap sent with this request stays even when a screenshot taken after it is newer.
+  const withShot = [...mix, { role: 'assistant', content: [{ type: 'tool_call', id: 'tB', name: 'take_screenshot', args: {} }] },
+    { role: 'tool', content: [{ type: 'tool_result', toolCallId: 'tB', content: [{ type: 'image', mediaType: 'image/jpeg', data: 'T2' }] }] }];
+  const f2 = S2.fitContext(withShot, { budgetTokens: 1e6 });
+  assert.deepEqual(JSON.stringify(f2).match(/"data":"(\w+)"/g), ['"data":"S3"', '"data":"T2"'], 'the current request\'s snap and the newest screenshot');
+  assert.match(JSON.stringify(f2), /A screenshot was here/, 'older ones leave a note');
   assert.equal(S2.forDisk(mix).some((m) => JSON.stringify(m).includes('"S2"')), false, 'snaps never reach disk');
   console.log('snap image tests: passed');
 }
@@ -186,7 +192,7 @@ console.log('store tests: all passed');
   const msgs = [...turn1, { role: 'user', content: 'q2' }, ...shot('s2'), ...shot('s3'), ...shot('s4')];
   const f = S5.fitContext(msgs, { budgetTokens: 1e6 });
   const datas = (JSON.stringify(f).match(/"data":"(\w+)"/g) ?? []).map((d) => d.slice(8, -1));
-  assert.deepEqual(datas, ['s2', 's3', 's4'], 'the newest three images are kept; older ones collapse to a line');
+  assert.deepEqual(datas, ['s4'], 'only the newest image is kept; older ones collapse to a line');
   // Regression: a screenshot from the previous request used to be dropped as soon as a new request came in.
   const prev = S5.fitContext([{ role: 'system', content: 'sys' }, { role: 'user', content: 'q1' }, ...shot('p1'), { role: 'assistant', content: 'a1' }, { role: 'user', content: 'and the left one?' }], { budgetTokens: 1e6 });
   assert.match(JSON.stringify(prev), /"data":"p1"/, "the last request's screenshot is still there for a follow-up");

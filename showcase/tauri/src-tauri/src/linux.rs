@@ -437,38 +437,47 @@ fn fade_overlays(app: &AppHandle, opacity: f64) {
 /// screenshot_done with the picture's size in pixels and the part of the desktop it covers (in the overlay's
 /// points), or with what went wrong. Main thread only.
 pub(crate) fn screenshot(app: &AppHandle, id: Value, file: String) {
-    let done = |app: &AppHandle, id: &Value, r: Result<(i32, i32), String>| {
+    let done = |app: &AppHandle, id: &Value, r: Result<(i32, i32), String>, ms: Value| {
         let msg = match r {
-            Ok((w, h)) => json!({ "type": "screenshot_done", "id": id, "ok": true, "pixels": [w, h], "bounds": desktop_bounds(app) }),
+            Ok((w, h)) => json!({ "type": "screenshot_done", "id": id, "ok": true, "pixels": [w, h], "bounds": desktop_bounds(app), "ms": ms }),
             Err(e) => json!({ "type": "screenshot_done", "id": id, "ok": false, "error": e }),
         };
         crate::to_sidecar(app, &msg);
     };
-    // Long enough for the compositor to draw a frame without the overlays.
-    const CLEAR: Duration = Duration::from_millis(150);
+    // Long enough for the compositor to draw a frame without the overlays (a few frames at 60 Hz).
+    const CLEAR: Duration = Duration::from_millis(80);
     fade_overlays(app, 0.0);
     let app = app.clone();
     if session() == Session::X11 {
         gtk::glib::timeout_add_local_once(CLEAR, move || {
             let shot = grab_root();
             fade_overlays(&app, 1.0);
-            done(&app, &id, shot.and_then(|p| save_fitted(&p, &file)));
+            done(&app, &id, shot.and_then(|p| save_fitted(&p, &file)), Value::Null);
         });
         return;
     }
     std::thread::spawn(move || {
         std::thread::sleep(CLEAR);
+        let t0 = std::time::Instant::now();
         let shot = portal_screenshot();
+        let t_portal = t0.elapsed();
         let app2 = app.clone();
         let _ = app.run_on_main_thread(move || fade_overlays(&app2, 1.0));
+        let mut ms = json!({ "portal": t_portal.as_millis() as u64 });
         let r = shot.and_then(|path| {
+            let t1 = std::time::Instant::now();
             let loaded = gtk::gdk_pixbuf::Pixbuf::from_file(&path).map_err(|e| e.to_string());
+            let t_load = t1.elapsed();
             // The portal keeps its picture (in Pictures, on most desktops): this one was only for the question asked.
             remove_portal_file(&path);
-            loaded.and_then(|p| save_fitted(&p, &file))
+            let t2 = std::time::Instant::now();
+            let saved = loaded.and_then(|p| save_fitted(&p, &file));
+            // Where the time goes, for anyone timing a slow screenshot (the log has it as screenshot_time).
+            ms = json!({ "portal": t_portal.as_millis() as u64, "load": t_load.as_millis() as u64, "save": t2.elapsed().as_millis() as u64 });
+            saved
         });
         let app2 = app.clone();
-        let _ = app.run_on_main_thread(move || done(&app2, &id, r));
+        let _ = app.run_on_main_thread(move || done(&app2, &id, r, ms));
     });
 }
 
@@ -682,9 +691,46 @@ fn launch_word(program: &str) -> String {
     format!("'{}'", program.replace('\'', "'\\''"))
 }
 
+/// Where the app's own D-Bus address is: the single-instance plugin serves `<identifier>.SingleInstance` at that
+/// name as a path. The identifier is checked against tauri.conf.json by a test.
+const BUS_ID: &str = "com.kenkai.roamies";
+
+/// The text of the shortcut helper: `roamies-ctl --summon` (and the other actions) sends the request to the running
+/// app over D-Bus, a few milliseconds, instead of starting a second copy of the app to say it, which takes far longer
+/// (most of all from an AppImage, which has to mount itself first). When the app isn't running, or there is no gdbus,
+/// it starts the app as the plain command would.
+fn ctl_script(program_word: &str) -> String {
+    let path = format!("/{}/SingleInstance", BUS_ID.replace('.', "/"));
+    format!(
+        "#!/bin/sh\n# Written by Roamies each time it starts; changes here are overwritten.\ncase \"$1\" in\n  --summon|--list|--talk|--ask|--panel|--snap) ;;\n  *) exec {program_word} \"$@\" ;;\nesac\ngdbus call --session --dest {BUS_ID}.SingleInstance --object-path {path} --method org.SingleInstance.DBus.ExecuteCallback \"['roamies', '$1']\" / >/dev/null 2>&1 || exec {program_word} \"$@\"\n"
+    )
+}
+
+/// Writes the helper to ~/.local/bin/roamies-ctl when it is missing or out of date, and returns its path.
+fn write_ctl(program_word: &str) -> Option<PathBuf> {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = PathBuf::from(std::env::var_os("HOME")?).join(".local/bin");
+    let file = dir.join("roamies-ctl");
+    let script = ctl_script(program_word);
+    if std::fs::read_to_string(&file).is_ok_and(|have| have == script) {
+        return Some(file);
+    }
+    std::fs::create_dir_all(&dir).ok()?;
+    let tmp = dir.join(format!(".roamies-ctl.{}", std::process::id()));
+    std::fs::write(&tmp, &script).ok()?;
+    std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755)).ok()?;
+    std::fs::rename(&tmp, &file).ok()?;
+    Some(file)
+}
+
 pub(crate) fn launch_command() -> String {
     let program = appimage().or_else(|| std::env::current_exe().ok()).map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|| "roamies".into());
-    launch_word(&program)
+    let word = launch_word(&program);
+    // The commands people bind to keys go through the helper, which is quick; if it can't be written, the plain command.
+    match write_ctl(&word) {
+        Some(ctl) => launch_word(&ctl.to_string_lossy()),
+        None => word,
+    }
 }
 
 /// Where a copy installed from a .deb or .rpm gets its update: the package manager owns those files, so the app
@@ -696,6 +742,21 @@ pub(crate) fn open_releases_page() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_shortcut_helper_talks_to_the_apps_own_dbus_address() {
+        // The single-instance plugin's name is the identifier plus .SingleInstance; the helper must match it.
+        let conf: serde_json::Value = serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        assert_eq!(conf["identifier"].as_str(), Some(BUS_ID));
+        let s = ctl_script("'/home/me/Roamies Apps/Roamies.AppImage'");
+        assert!(s.starts_with("#!/bin/sh\n"));
+        assert!(s.contains("--dest com.kenkai.roamies.SingleInstance --object-path /com/kenkai/roamies/SingleInstance"));
+        assert!(s.contains("org.SingleInstance.DBus.ExecuteCallback"));
+        // Anything that isn't one of the known actions never reaches the D-Bus call (it is a quoted string there).
+        assert!(s.contains("*) exec '/home/me/Roamies Apps/Roamies.AppImage' \"$@\" ;;"));
+        // Not running: it starts the app.
+        assert!(s.trim_end().ends_with("|| exec '/home/me/Roamies Apps/Roamies.AppImage' \"$@\""));
+    }
 
     #[test]
     fn the_box_is_cut_from_the_full_size_picture_by_desktop_points() {

@@ -133,11 +133,12 @@ const READ_TOOLS = new Set(['read_window']);
 const OLD_READ = "[The full list of this window's controls was shown for an earlier request and has been trimmed since to save space; your answer then was based on all of it. The screen has likely changed: read it again if you need it now.]";
 const textOfResult = (c) => (typeof c === 'string' ? c : Array.isArray(c) ? c.map((p) => p?.text ?? '').join('') : '');
 
-const KEEP_SHOTS = 3;
+const KEEP_SHOTS = 1;
 /**
  * Before each model call. Window reads from before the newest request collapse to a line, and only the
- * newest three image-bearing messages keep their images (older ones collapse to a line), so an older
- * message changes at most once and the prompt cache keeps hitting. If the history is over budget, the
+ * newest image-bearing message keeps its image (older ones collapse to a line, so a model can't describe an old
+ * screen as the current one), plus the picture the user attached to the request being answered (an area snap).
+ * An older message changes at most once, so the prompt cache keeps hitting. If the history is over budget, the
  * oldest exchanges are dropped (cutting at a user message so tool calls stay paired).
  */
 export function fitContext(messages, { budgetTokens, force = false }) {
@@ -149,6 +150,7 @@ export function fitContext(messages, { budgetTokens, force = false }) {
   let current = -1;
   messages.forEach((m, i) => { if (isRequest(m)) current = i; });
   const keepImg = new Set(messages.map((m, i) => (hasImage(m) ? i : -1)).filter((i) => i >= 0).slice(-KEEP_SHOTS));
+  if (current >= 0 && hasImage(messages[current])) keepImg.add(current);
   const names = new Map();
   for (const m of messages) if (m.role === 'assistant' && Array.isArray(m.content)) for (const p of m.content) if (p?.type === 'tool_call') names.set(p.id, p.name);
   let out = messages.map((m, i) => {
