@@ -468,7 +468,10 @@ pub(crate) fn screenshot(app: &AppHandle, id: Value, file: String) {
             let t1 = std::time::Instant::now();
             let loaded = gtk::gdk_pixbuf::Pixbuf::from_file(&path).map_err(|e| e.to_string());
             let t_load = t1.elapsed();
-            // The portal keeps its picture (in Pictures, on most desktops): this one was only for the question asked.
+            // The full-size picture stays next to the small one (file.full.png) for reading words off it (the sidecar's OCR);
+            // the sidecar deletes it. Otherwise the portal's copy goes: it keeps one (in Pictures, on most desktops).
+            let full = format!("{file}.full.png");
+            let _ = std::fs::rename(&path, &full).or_else(|_| std::fs::copy(&path, &full).map(|_| ()));
             remove_portal_file(&path);
             let t2 = std::time::Instant::now();
             let saved = loaded.and_then(|p| save_fitted(&p, &file));

@@ -36,6 +36,7 @@ tried. GNOME and KDE use upstream's path (see below). Bug reports with your comp
 | Screenshots and pointing         | Yes                          | Yes, through your desktop's screenshot portal                 |
 | Ask about an area                | Yes                          | Yes, with a key you bind (new, still being tuned on niri)     |
 | Roamie follows the cursor        | Yes                          | Only over its own windows on Wayland (see below)              |
+| Marks snap to the words on screen | Yes                          | Yes, if tesseract is installed (see Install)                  |
 | Circle things while talking      | Yes                          | No (needs the cursor)                                         |
 | Read windows, click and type     | Yes                          | No                                                            |
 | Shortcuts                        | Global keys                  | Keys you bind in your compositor (X11 sessions get real ones) |
@@ -56,6 +57,10 @@ position from the compositor's screen-cast frames, but that needs PipeWire 1.4.8
    AppImages need FUSE 2 (`libfuse2` or `libfuse2t64`).
 3. Run it once. It writes `~/.local/bin/roamies-ctl` and the setup guide opens.
 4. To update, download the new AppImage over the old one. Your settings, keys and memory are in `~/.gg` and are kept.
+
+For drawings that land on the right words, install tesseract (`sudo apt install tesseract-ocr`, or `doas apt install tesseract-ocr`).
+Roamies reads the screenshot with it to find a button's or link's exact box, as the macOS and Windows helpers do, instead of
+trusting the model's guess at pixel positions. Without it, drawings still work but are only as exact as the model's guess.
 
 Needs glibc 2.38 or newer (Ubuntu 24.04, Fedora 39, Debian 13 or newer). The builds aren't signed, so the in-app updater
 has nothing to install: it looks at this repo's releases, not upstream's.

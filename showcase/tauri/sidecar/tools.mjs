@@ -1,5 +1,6 @@
 // The agent's tools: screen capture, reading and working other apps (the "hands" helper), files, commands,
 // web pages and memory. Every file, command, URL and open goes through safety.mjs first.
+import { findWords, pngSize, readWords } from './ocr.mjs';
 import { execFile, spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import fs from 'node:fs/promises';
@@ -350,6 +351,29 @@ export function createTools({ allowActions, ui, ask, openUrl, onCommitments, foc
     const dims = lastShot?.unmapped ? ` (it doesn't line up with the window on screen, so don't point or click by its pixels; use visible words)` : size ? shotUnits(...size, scale) : '';
     return { content: [{ type: 'text', text: `Screenshot of ${what}${dims}.` }, await imageBlock(file, 'image/jpeg')] };
   }
+  // Linux has no helper to read words off the screen, so the latest screenshot is kept (the full-size one the app saved
+  // beside it, else a copy of the small one) and read with tesseract when words are looked for.
+  let ocrFiles = [];
+  async function keepForOcr(file, small) {
+    for (const f of ocrFiles) fs.unlink(f).catch(() => {});
+    ocrFiles = [];
+    const full = `${file}.full.png`;
+    const png = await fs.readFile(full).then((b) => pngSize(b), () => null);
+    if (png) { ocrFiles = [full]; return { file: full, px: png, words: null }; }
+    const copy = `${file}.ocr.jpg`;
+    const ok = await fs.copyFile(file, copy).then(() => true, () => false);
+    if (ok) ocrFiles = [copy];
+    return ok ? { file: copy, px: small, words: null } : null;
+  }
+  async function ocrMatches(find) {
+    const shot = lastShot?.ocr;
+    if (!shot) return [];
+    shot.words ??= readWords(shot.file);
+    const words = await shot.words;
+    const [x0, y0, bw, bh] = lastShot.bounds;
+    const kx = bw / shot.px[0], ky = bh / shot.px[1];
+    return findWords(words, find).map((m) => ({ text: m.text, bounds: [x0 + m.bounds[0] * kx, y0 + m.bounds[1] * ky, m.bounds[2] * kx, m.bounds[3] * ky] }));
+  }
   // target: "screen", "front" (the window you're working in), an app name ("browser", "Safari", "Figma"),
   // or "window:<id>" from list_windows. Apps that are open but hidden or minimised are brought forward.
   async function screenshot({ target = 'screen' } = {}, ctx) {
@@ -395,6 +419,7 @@ export function createTools({ allowActions, ui, ask, openUrl, onCommitments, foc
     const b = Array.isArray(res.bounds) && res.bounds.length === 4 ? res.bounds : null;
     const scale = pointScale();
     lastShot = iw && ih && b ? { ...shotMap(b, iw, ih, scale), bounds: b, win: null, turn } : null;
+    if (lastShot) lastShot.ocr = await keepForOcr(file, [iw, ih]);
     const whole = t === 'screen' ? '' : ' (one app\'s window can\'t be captured alone on Linux, so this is the whole desktop)';
     return { content: [{ type: 'text', text: `Screenshot of the whole desktop${whole}${iw ? shotUnits(iw, ih, scale, 'draw') : ''}.` }, await imageBlock(file, 'image/jpeg')] };
   }
@@ -506,6 +531,7 @@ export function createTools({ allowActions, ui, ask, openUrl, onCommitments, foc
       // Text read off the screen: words inside paragraphs, text in images and canvases, single characters (case
       // matters). Exact boxes; [] when it isn't there (or without the helper).
       async textAll(find) {
+        if (!HANDS && LINUX) return ocrMatches(find).catch(() => []);
         if (!HANDS) return [];
         // The window the latest screenshot showed, when there's one from this request: the front app can change
         // between looking and drawing.
@@ -513,6 +539,16 @@ export function createTools({ allowActions, ui, ask, openUrl, onCommitments, foc
         return (await hands('ocr-find', where, String(find), 'all').catch(() => null))?.matches ?? [];
       },
       async findText(find) {
+        if (!HANDS && LINUX) {
+          if (!lastShot?.ocr) throw new Error('Take a screenshot first, then give the words as they read on it (or x, y from it).');
+          let all;
+          try { all = await ocrMatches(find); } catch (e) {
+            throw new Error(e.missing ? 'Finding words on screen needs tesseract (sudo apt install tesseract-ocr); for now give x, y from the screenshot instead.' : `Couldn't read the screen: ${e.message}. Give x, y from the screenshot instead.`);
+          }
+          if (all.length > 1) throw new Error(`"${find}" appears ${all.length} times on screen. Add within: {x, y, w, h} (screenshot pixels round the one you mean), or every: true to mark each.`);
+          if (!all.length) throw new Error(`"${find}" isn't readable on screen. Use the exact words shown there; if you aren't sure, take a screenshot first, or give x, y.`);
+          return all[0];
+        }
         if (!HANDS) throw new Error('Finding words on screen needs the Roamies app; take a screenshot and give x, y instead.');
         // Text read off the screen: one match, or where each of several is, so the right one can be picked with within.
         const readOne = async () => {
