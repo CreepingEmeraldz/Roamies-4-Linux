@@ -421,7 +421,9 @@ export function createTools({ allowActions, ui, ask, openUrl, onCommitments, foc
     lastShot = iw && ih && b ? { ...shotMap(b, iw, ih, scale), bounds: b, win: null, turn } : null;
     if (lastShot) lastShot.ocr = await keepForOcr(file, [iw, ih]);
     const whole = t === 'screen' ? '' : ' (one app\'s window can\'t be captured alone on Linux, so this is the whole desktop)';
-    return { content: [{ type: 'text', text: `Screenshot of the whole desktop${whole}${iw ? shotUnits(iw, ih, scale, 'draw') : ''}.` }, await imageBlock(file, 'image/jpeg')] };
+    // Roamies reads the words off this picture itself (OCR), so no script or image tool of your own is needed to find them.
+    const how = lastShot?.ocr ? ' To mark or point at a button, link, field or label that has words, give its exact words as the place ({text: "Log in"}): Roamies finds the real box on screen, which is far more exact than pixels. Use x, y only for things without words (icons, areas). Never run your own scripts or image tools to find positions.' : '';
+    return { content: [{ type: 'text', text: `Screenshot of the whole desktop${whole}${iw ? shotUnits(iw, ih, scale, 'draw') : ''}.${how}` }, await imageBlock(file, 'image/jpeg')] };
   }
 
   // ---------- drawing on screen (the draw tool) ----------
