@@ -368,11 +368,16 @@ export function createTools({ allowActions, ui, ask, openUrl, onCommitments, foc
   async function ocrMatches(find) {
     const shot = lastShot?.ocr;
     if (!shot) return [];
+    const t0 = Date.now();
     shot.words ??= readWords(shot.file);
-    const words = await shot.words;
+    let words;
+    try { words = await shot.words; } catch (e) { console.error(`[ocr] reading the screenshot failed: ${e.message}`); throw e; }
     const [x0, y0, bw, bh] = lastShot.bounds;
     const kx = bw / shot.px[0], ky = bh / shot.px[1];
-    return findWords(words, find).map((m) => ({ text: m.text, bounds: [x0 + m.bounds[0] * kx, y0 + m.bounds[1] * ky, m.bounds[2] * kx, m.bounds[3] * ky] }));
+    const found = findWords(words, find).map((m) => ({ text: m.text, bounds: [x0 + m.bounds[0] * kx, y0 + m.bounds[1] * ky, m.bounds[2] * kx, m.bounds[3] * ky] }));
+    // For bug reports: what was asked for, what was found and where (screen points), and how the picture maps onto the screen.
+    console.error(`[ocr] "${find}": ${found.length} found ${JSON.stringify(found.map((f) => f.bounds.map(Math.round)))} (${words.length} words read, picture ${shot.px.join('x')} -> screen ${lastShot.bounds.map(Math.round).join(',')}, ${Date.now() - t0} ms)`);
+    return found;
   }
   // target: "screen", "front" (the window you're working in), an app name ("browser", "Safari", "Figma"),
   // or "window:<id>" from list_windows. Apps that are open but hidden or minimised are brought forward.
@@ -622,7 +627,9 @@ export function createTools({ allowActions, ui, ask, openUrl, onCommitments, foc
         }
         const [w, h] = lastShot.size ?? [];
         if (w && h && (x < -2 || y < -2 || x > w + 2 || y > h + 2)) throw new Error(`${Math.round(x)}, ${Math.round(y)} is outside the screenshot (${lastShot.scale === 'norm1000' ? 'its 0–1000 grid' : `${w}×${h} px`}).`);
-        return toScreen(lastShot, x, y);
+        const at = toScreen(lastShot, x, y);
+        console.error(`[draw] pixel ${Math.round(x)},${Math.round(y)} (${lastShot.scale}, grid ${lastShot.size?.join('x')}) -> screen ${at.map(Math.round).join(',')}`);
+        return at;
       },
     };
   }
