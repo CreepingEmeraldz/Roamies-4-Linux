@@ -713,7 +713,7 @@
     // The command itself shows only if copying fails, so it can be copied by hand.
     bound: '',
     renderBind(b) {
-      const list = [['talk', 'Talk to me'], ['summon', 'Show or hide me'], ['ask', 'Ask me'], ['list', 'Your list'], ['panel', 'My panel']];
+      const list = [['talk', 'Talk to me'], ['summon', 'Show or hide me'], ['ask', 'Ask me'], ['snap', 'Ask about an area'], ['list', 'Your list'], ['panel', 'My panel']];
       const sig = JSON.stringify(b);
       if (keys.bound === sig) return;
       keys.bound = sig;

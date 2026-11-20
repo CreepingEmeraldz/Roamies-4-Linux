@@ -92,7 +92,7 @@ const say = (text, mood) => (onboarding ? ob({ kind: 'say', text, mood }) : ui({
 const sayOut = say;
 
 const VERSION = process.env.ROAMIES_VERSION || '0.0.0';
-const UPDATE_REPO = 'KenKaiii/Roamies';
+const UPDATE_REPO = 'CreepingEmeraldz/Roamies-4-Linux';
 const HOME = os.homedir();
 // The chat works from ~/Roamies: commands run there and files given without a full path land there (Data/ and
 // Skills/ inside it stay write-protected by safety.mjs). Made up front so Claude Code always has a folder to start in.
@@ -379,7 +379,7 @@ const PANEL = LINUX ? 'the panel (Open Panel… in my tray icon\'s menu, or open
 // What the shortcuts are on Wayland: whatever keys they bound to these commands in their desktop's settings.
 // ROAMIES_LAUNCH: how this copy is started (the app says: plain roamies for a package, the AppImage's path for one).
 const LAUNCH = process.env.ROAMIES_LAUNCH || 'roamies';
-const BIND = Object.fromEntries(['summon', 'talk', 'ask', 'list', 'panel'].map((k) => [k, `${LAUNCH} --${k}`]));
+const BIND = Object.fromEntries(['summon', 'talk', 'ask', ...(SNAP_OK ? ['snap'] : []), 'list', 'panel'].map((k) => [k, `${LAUNCH} --${k}`]));
 
 const auth = openAuth();
 // OpenRouter's and OpenCode's full model lists (gg-core ships only a few of each), cached next to the sessions.

@@ -862,7 +862,7 @@
   }
   // Wayland: the commands to bind to keys in the desktop's settings (no app may hold its own shortcuts there).
   // A command shows only after copying it failed, so it can be copied by hand.
-  const BIND_ROWS = [['talk', 'Talk to me'], ['summon', 'Show or hide me'], ['ask', 'Ask me'], ['list', 'Your list'], ['panel', 'This panel']];
+  const BIND_ROWS = [['talk', 'Talk to me'], ['summon', 'Show or hide me'], ['ask', 'Ask me'], ['snap', 'Ask about an area'], ['list', 'Your list'], ['panel', 'This panel']];
   // Talking to me, and when the mic opens without a key.
   function listeningPage() {
     const v = state.voice;
