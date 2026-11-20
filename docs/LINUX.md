@@ -17,7 +17,8 @@ tried. GNOME and KDE use upstream's path (see below). Bug reports with your comp
 - **Drawings land where they should** on screens whose layout doesn't start at 0,0.
 - **Far less idle battery use:** a 30 fps cap, a resting state when nothing has happened for 15 seconds, click-area checks that
   slow down at rest, and sound devices that stay closed until a sound plays.
-- **Ask about an area** (`roamies-ctl --snap`): drag a box over a frozen screenshot and ask about just that part.
+- **Ask about an area** (`roamies-ctl --snap`): drag a box over a frozen screenshot and ask about just that part. Pressing the key
+  again while the box or the "What about this?" question is still open starts over, so a half-finished one never leaves the key dead.
 - **Quicker shortcuts:** the app writes `~/.local/bin/roamies-ctl`, a tiny script that tells the running app what to do over
   D-Bus in a few milliseconds instead of starting a second copy of Roamies (which, from an AppImage, takes much longer).
 - **Readable rate-limit errors** for Groq and OpenRouter ("Groq allows 8000 tokens/min; I sent 12880") and fixes for

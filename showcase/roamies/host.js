@@ -95,9 +95,18 @@
     pick.el.remove();
     pick = null;
     typing(false);
+    Roamie.wake?.();
+    // The picker's full-screen click area goes now: the timer below would leave it for up to a second at rest, and clicks
+    // in that time would land on a window nobody can see. It puts the real click areas back at its next look.
+    if (LINUX) invoke('set_hit_rects', { rects: [] }).catch(() => {});
   };
   const startPick = (m) => {
-    if (!Array.isArray(m.bounds) || typeof m.image !== 'string') return;
+    // Whatever goes wrong, the shell is told (cancelled) at once: it would otherwise wait on a picker nobody can see.
+    const giveUp = () => { endPick(); invoke('select_done', { rect: null }).catch(() => {}); };
+    if (!Array.isArray(m.bounds) || typeof m.image !== 'string') { giveUp(); return; }
+    try { openPick(m); } catch { giveUp(); }
+  };
+  const openPick = (m) => {
     endPick();
     Roamie.wake?.();
     const [bx, by, bw, bh] = m.bounds, o = Roamie.origin ?? { x: 0, y: 0 };
@@ -113,6 +122,9 @@
     hint.textContent = 'Drag to choose an area  ·  Esc to cancel';
     Object.assign(hint.style, { position: 'absolute', top: '18px', left: '50%', transform: 'translateX(-50%)', padding: '8px 14px', borderRadius: '10px', font: '600 13px system-ui, sans-serif', color: '#fff', background: 'rgba(0,0,0,.65)' });
     el.append(dim, box, hint);
+    // The whole screen takes clicks before the picture shows (the timer below would only do it at its next look), so the
+    // first press can't pass through to the window underneath.
+    if (LINUX) invoke('set_hit_rects', { rects: [0, 0, innerWidth, innerHeight] }).catch(() => {});
     document.body.appendChild(el);
     const finish = (rect) => { endPick(); invoke('select_done', { rect }).catch(() => {}); };
     let from = null;

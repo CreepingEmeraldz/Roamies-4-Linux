@@ -2658,14 +2658,23 @@ async function linuxSelect(file) {
 }
 // The next question (typed in the bubble, or spoken with the talk keys) is sent with the picture.
 let snap = null;
+// The area snap in progress. On Linux pressing the key again replaces it (the box not drawn yet, or "What about this?" left
+// unanswered): an older one that never finished must not leave the key dead.
+let snapRun = null;
 async function areaSnap() {
-  if (!SNAP_OK || snapping) return;
-  snapping = true;
+  if (!SNAP_OK) return;
+  if (snapRun && !LINUX) return;
+  snapRun?.controller.abort();
+  const run = { controller: new AbortController() };
+  snapRun = run;
+  snap = null;
+  const live = () => snapRun === run;
   const file = path.join(os.tmpdir(), `sidekick-area-${Date.now()}.png`);
   try {
     const res = LINUX ? await linuxSelect(file) : await hands('select', file);
-    if (res.cancelled) return;
+    if (res.cancelled || !live()) return;
     await fitImage(file);
+    if (!live()) return;
     snap = { image: await imageBlock(file, 'image/png'), at: Date.now() };
     if (VOICE_OK && config.voice) {
       // Snap, then just talk: start listening straight away (hands-free, ends when you pause).
@@ -2673,20 +2682,19 @@ async function areaSnap() {
       snap.waitingVoice = true;
       send({ type: 'listen' });
       const t0 = Date.now();
-      while (snap && snap.waitingVoice && Date.now() - t0 < 12_000) await new Promise((r) => setTimeout(r, 150));
-      if (!snap) return; // sent with what was said
+      while (live() && snap && snap.waitingVoice && Date.now() - t0 < 12_000) await new Promise((r) => setTimeout(r, 150));
+      if (!live() || !snap) return; // replaced, or sent with what was said
       snap.waitingVoice = false;
     }
-    const q = await ask({ placeholder: 'What about this?' });
-    if (!snap) return; // already sent by voice
+    const q = await ask({ placeholder: 'What about this?' }, run.controller.signal);
+    if (!live() || !snap) return; // replaced, or already sent by voice
     if (q === null) { snap = null; return; } // Escape: drop it
     const s = snap; snap = null;
     enqueue(q.trim() || 'What is this? Explain it simply.', { image: s.image });
   } catch (e) {
-    say(problem('screen', e).text, 'concerned');
-  } finally { snapping = false; fs.unlink(file).catch(() => {}); }
+    if (live()) say(problem('screen', e).text, 'concerned');
+  } finally { if (live()) snapRun = null; fs.unlink(file).catch(() => {}); }
 }
-let snapping = false;
 // Words said while ⌃⌥ was held, maybe with an area marked by drawing on the screen at the same time.
 async function onSpoken(text, area) {
   if (!area?.file) return enqueue(text, { interrupt: true, image: takeSnap(), byVoice: true });

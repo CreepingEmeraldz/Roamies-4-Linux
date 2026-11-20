@@ -492,21 +492,33 @@ struct Pick {
     file: String,
 }
 static PICK: std::sync::Mutex<Option<Pick>> = std::sync::Mutex::new(None);
+/// Which `select` is the newest: a picture that arrives for an older one (it was replaced while the desktop was taking it) is dropped.
+static PICK_GEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Closes a picker that is up (or being set up) and tells the sidecar it was cancelled, so nothing stays waiting on it.
+fn cancel_pick(app: &AppHandle) {
+    let Some(old) = PICK.lock().unwrap().take() else { return };
+    crate::to_overlays(app, &json!({ "kind": "pick_end" }));
+    let _ = std::fs::remove_file(&old.full);
+    crate::to_sidecar(app, &json!({ "type": "select_done", "id": old.id, "ok": false, "cancelled": true }));
+}
 
 pub(crate) fn select(app: &AppHandle, id: Value, file: String) {
     let fail = |app: &AppHandle, id: &Value, e: String| crate::to_sidecar(app, &json!({ "type": "select_done", "id": id, "ok": false, "error": e }));
-    if PICK.lock().unwrap().is_some() {
-        fail(app, &id, "An area is already being picked.".into());
-        return;
+    if trace() {
+        eprintln!("area select: asked (a picker is up: {})", PICK.lock().unwrap().is_some());
     }
-    const CLEAR: Duration = Duration::from_millis(150);
+    // Asking again while one is open replaces it, so a picker that got stuck can't block the next one.
+    cancel_pick(app);
+    let gen = PICK_GEN.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+    const CLEAR: Duration = Duration::from_millis(80);
     fade_overlays(app, 0.0);
     let app = app.clone();
     if session() == Session::X11 {
         gtk::glib::timeout_add_local_once(CLEAR, move || {
             let shot = grab_root();
             fade_overlays(&app, 1.0);
-            if let Err(e) = shot.and_then(|p| begin_pick(&app, &id, file, &p)) {
+            if let Err(e) = shot.and_then(|p| begin_pick(&app, &id, file, gen, &p, None)) {
                 fail(&app, &id, e);
             }
         });
@@ -515,12 +527,17 @@ pub(crate) fn select(app: &AppHandle, id: Value, file: String) {
     std::thread::spawn(move || {
         std::thread::sleep(CLEAR);
         let shot = portal_screenshot();
+        if trace() {
+            eprintln!("area select: portal answered: {:?}", shot.as_ref().map(|p| p.display().to_string()));
+        }
         let app2 = app.clone();
         let _ = app.run_on_main_thread(move || fade_overlays(&app2, 1.0));
         let r = shot.and_then(|path| {
             let loaded = gtk::gdk_pixbuf::Pixbuf::from_file(&path).map_err(|e| e.to_string());
+            // begin_pick moves the portal's own file into place (no second PNG to write); whatever is left of it goes now.
+            let r = loaded.and_then(|p| begin_pick(&app, &id, file, gen, &p, Some(&path)));
             remove_portal_file(&path);
-            loaded.and_then(|p| begin_pick(&app, &id, file, &p))
+            r
         });
         if let Err(e) = r {
             let app2 = app.clone();
@@ -530,15 +547,29 @@ pub(crate) fn select(app: &AppHandle, id: Value, file: String) {
 }
 
 /// Keeps the full-size picture on disk for the crop, and shows the overlays a screen-sized copy to drag over.
-fn begin_pick(app: &AppHandle, id: &Value, file: String, shot: &gtk::gdk_pixbuf::Pixbuf) -> Result<(), String> {
+fn begin_pick(app: &AppHandle, id: &Value, file: String, gen: u64, shot: &gtk::gdk_pixbuf::Pixbuf, png: Option<&Path>) -> Result<(), String> {
     use base64::Engine;
+    if PICK_GEN.load(std::sync::atomic::Ordering::SeqCst) != gen {
+        // A newer request replaced this one while the picture was being taken.
+        crate::to_sidecar(app, &json!({ "type": "select_done", "id": id, "ok": false, "cancelled": true }));
+        return Ok(());
+    }
+    let t0 = std::time::Instant::now();
     let bounds = desktop_bounds(app);
     let full = std::env::temp_dir().join(format!("roamies-pick-{}.png", std::process::id()));
-    shot.savev(&full, "png", &[]).map_err(|e| e.to_string())?;
+    // The desktop already wrote the full-size picture as a PNG: keep that file (moving it is instant) instead of encoding another.
+    let moved = png.is_some_and(|p| std::fs::rename(p, &full).is_ok() || (std::fs::copy(p, &full).is_ok() && std::fs::remove_file(p).is_ok()));
+    if !moved {
+        shot.savev(&full, "png", &[]).map_err(|e| e.to_string())?;
+    }
+    let t_keep = t0.elapsed();
     let (w, h) = (bounds[2].round().max(1.0) as i32, bounds[3].round().max(1.0) as i32);
     let preview = shot.scale_simple(w, h, gtk::gdk_pixbuf::InterpType::Bilinear).ok_or("the screenshot couldn't be resized")?;
     let jpeg = preview.save_to_bufferv("jpeg", &[("quality", "80")]).map_err(|e| e.to_string())?;
     let image = format!("data:image/jpeg;base64,{}", base64::engine::general_purpose::STANDARD.encode(jpeg));
+    if trace() {
+        eprintln!("area select: keep picture {} ms, preview {} ms ({} KB)", t_keep.as_millis(), (t0.elapsed() - t_keep).as_millis(), image.len() / 1024);
+    }
     *PICK.lock().unwrap() = Some(Pick { id: id.clone(), full, bounds, file });
     let (app2, bounds) = (app.clone(), bounds);
     let _ = app.run_on_main_thread(move || crate::to_overlays(&app2, &json!({ "kind": "pick", "image": image, "bounds": bounds })));
