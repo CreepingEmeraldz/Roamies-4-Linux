@@ -134,6 +134,8 @@ const actionsOff = `File edits and commands are switched off. Tell the user to t
 // "hands": the bundled helper that captures one window or area and reads/controls other apps (hands/main.swift on
 // macOS, hands-win on Windows; same commands and JSON). A .mjs one (a test's fake) runs on this Node.
 const HANDS = process.env.ROAMIES_HANDS || '';
+// Linux: the bundled accessibility helper (roamies-atspi), which only reads: list_windows and read_window.
+const ATSPI = LINUX ? process.env.ROAMIES_ATSPI || '' : '';
 const runHands = (args, opts) => (HANDS.endsWith('.mjs') ? run(process.execPath, [HANDS, ...args], opts) : run(HANDS, args, opts));
 const STALE_ID = 'The page changed since read_window, so that id is out of date. Call read_window again and use the new ids.';
 // An app named in read_window or act_in_app that isn't open: open it (with the open tool's safety check) and wait
@@ -310,11 +312,21 @@ export function createTools({ allowActions, ui, ask, openUrl, onCommitments, foc
     }
     return res;
   }
+  // The Linux accessibility helper: one JSON line, {ok:false,error} on a failure.
+  async function atspi(...args) {
+    let r;
+    try { r = await run(ATSPI, args, { timeout: 30_000 }); } catch (e) { throw new Error(`The accessibility helper didn't answer: ${String(e?.message ?? e).slice(0, 160)}`); }
+    let res;
+    try { res = JSON.parse(r.stdout.trim().split('\n').pop() || '{}'); } catch { throw new Error(`The accessibility helper failed: ${r.stderr.trim().slice(0, 200) || 'no output'}`); }
+    if (res.ok === false) throw new Error(res.error || 'That did not work.');
+    return res;
+  }
+  const look = HANDS || !ATSPI ? hands : atspi;
   async function readWindow(target = 'front') {
     const t = String(target || 'front');
-    const read = () => Promise.all([hands('ui', t === 'front' ? 'front' : `app:${t}`), hands('windows').catch(() => null)]);
+    const read = () => Promise.all([look('ui', t === 'front' ? 'front' : `app:${t}`), look('windows').catch(() => null)]);
     const [res, all] = await read().catch(async (err) => {
-      if (t === 'front' || !/No matching window/.test(String(err?.message ?? err)) || !(await launchApp(t, hands))) throw err;
+      if (t === 'front' || !/No matching window/.test(String(err?.message ?? err)) || !(await launchApp(t, look))) throw err;
       return read();
     });
     lastRead = { win: res.window.id, app: res.window.app, controls: res.controls, turn };
@@ -817,6 +829,23 @@ export function createTools({ allowActions, ui, ask, openUrl, onCommitments, foc
       description: "Look at the screen, only for what words can't show (images, layout, colours). target: 'front' (the window they're in: the default for 'this' or 'here'), an app name ('browser', 'Figma'; works behind other windows), 'window:<id>' from list_windows, or 'screen' (only when it must be everything).",
       parameters: z.object({ target: z.string().optional() }), execute: screenshot,
     },
+    // Linux: reading only, over the accessibility bus. Working other apps needs the hands helper, which Linux doesn't have.
+    ...(ATSPI && !HANDS ? [
+      {
+        name: 'list_windows', description: 'List the open app windows (app, title, id), front to back.',
+        parameters: z.object({}),
+        execute: async () => {
+          const res = await atspi('windows');
+          return res.windows.map((w) => `window:${w.id}  ${w.app}${w.title ? ` — ${w.title}` : ''}${w.frontApp ? '  (frontmost app)' : ''}`).join('\n') || 'No windows open.';
+        },
+      },
+      {
+        name: 'read_window',
+        description: "List an app window's controls (role, label, value) and all its text, including what's scrolled out of view, so you can read a whole page without scrolling or a screenshot. Reading only: you can't click or type in other apps. Browsers based on Chromium (Brave, Chrome) show their page only when accessibility is on; if the list is empty, say the browser may need a restart once.",
+        parameters: z.object({ target: z.string().optional() }),
+        execute: async ({ target = 'front' }) => readWindow(target),
+      },
+    ] : []),
     // The hands helper's tools: on macOS always (they explain what's missing), elsewhere when the helper is there.
     ...(process.platform === 'darwin' || HANDS ? [
       {

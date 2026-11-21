@@ -38,7 +38,8 @@ tried. GNOME and KDE use upstream's path (see below). Bug reports with your comp
 | Roamie follows the cursor        | Yes                          | Only over its own windows on Wayland (see below)              |
 | Marks snap to the words on screen | Yes                          | Yes, if tesseract is installed (see Install)                  |
 | Circle things while talking      | Yes                          | No (needs the cursor)                                         |
-| Read windows, click and type     | Yes                          | No                                                            |
+| Read windows (controls and text) | Yes                          | Yes, read only, over the accessibility bus (see below)        |
+| Click and type in other apps     | Yes                          | No                                                            |
 | Shortcuts                        | Global keys                  | Keys you bind in your compositor (X11 sessions get real ones) |
 | Updates itself                   | Yes                          | No: download the new AppImage from Releases                   |
 
@@ -48,6 +49,15 @@ A Wayland app hears about the pointer only while it is over one of the app's own
 it is. The overlay is click-through, so it gets no pointer events. On niri a helper (`roamies-pointer`) can read the
 position from the compositor's screen-cast frames, but that needs PipeWire 1.4.8 or newer, which Ubuntu 24.04 based systems
 (Zorin 18, Mint 22) don't have yet. The app starts the helper by itself on niri and it stays idle until PipeWire is new enough.
+
+### Reading windows
+
+`read_window` and `list_windows` use AT-SPI, the accessibility bus that GTK, Qt, Firefox and Chromium apps publish to, through
+a small bundled helper (`roamies-atspi`). The AI gets an app's buttons, links and fields and all of its text, including what's
+scrolled out of view, without a screenshot. Roamies switches the accessibility flag on by itself when it reads. Chromium
+browsers (Brave, Chrome) only build their page tree once it is on, so a browser that was already running may need a restart
+the first time. Apps that publish nothing (some games, some Electron apps) give an empty list, and the AI falls back to a screenshot.
+It only reads: clicking and typing in other apps isn't there yet.
 
 ## Install
 

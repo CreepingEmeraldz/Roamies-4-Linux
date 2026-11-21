@@ -10,6 +10,10 @@ While the AI is drawing, the overlay now repaints at most 30 times a second on L
 
 WebKit's GPU painting is on by default again on layer-shell compositors (niri, sway, Hyprland, river), which makes a fullscreen card and drawing much smoother. It could leave stale copies of the overlay on screen, so Roamies now repaints the whole screen each frame in that mode, which stops the flicker and streaks. `ROAMIES_DMABUF=0` turns the GPU path off, and `ROAMIES_FULLPAINT=0` turns the full repaint off.
 
+## Reading other apps' windows (Linux)
+
+The AI can now list your open windows and read what's in one: its buttons, links, fields and all its text, including what's scrolled out of view. This uses the accessibility bus (AT-SPI), as the macOS and Windows builds use their own accessibility APIs, so it works for GTK, Qt, Firefox and Chromium browsers such as Brave without a screenshot. Roamies turns accessibility on by itself when it reads, and a browser that was already running may need one restart to notice. It only reads for now: it can't click or type in other apps.
+
 ## Drawings and pointing land on the right words
 
 Roamies reads the words on your screenshot with tesseract, so rings and marks go where the text actually is instead of where the model guessed. Install it once: `sudo apt install tesseract-ocr`. Without it, drawing still works but is less accurate.

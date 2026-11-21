@@ -35,7 +35,10 @@ case "$TRIPLE" in
     cp "src-tauri/voice-win/target/$TRIPLE/release/roamies-voice" "src-tauri/binaries/roamies-voice-$TRIPLE"
     # The pointer helper for niri (pointer-linux): where the pointer is, read from a screen capture.
     cargo build --release --locked --manifest-path src-tauri/pointer-linux/Cargo.toml --target "$TRIPLE"
-    cp "src-tauri/pointer-linux/target/$TRIPLE/release/roamies-pointer" "src-tauri/binaries/roamies-pointer-$TRIPLE" ;;
+    cp "src-tauri/pointer-linux/target/$TRIPLE/release/roamies-pointer" "src-tauri/binaries/roamies-pointer-$TRIPLE"
+    # The accessibility helper (atspi-linux): lists windows and reads their controls and text, read only.
+    cargo build --release --locked --manifest-path src-tauri/atspi-linux/Cargo.toml --target "$TRIPLE"
+    cp "src-tauri/atspi-linux/target/$TRIPLE/release/roamies-atspi" "src-tauri/binaries/roamies-atspi-$TRIPLE" ;;
 esac
 cd src-tauri
 # macOS signing: APPLE_SIGNING_IDENTITY if set, else the first Developer ID Application certificate in
