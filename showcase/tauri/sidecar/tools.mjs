@@ -333,7 +333,7 @@ export function createTools({ allowActions, ui, ask, openUrl, onCommitments, foc
     const others = (all?.windows ?? []).filter((w) => w.app === res.window.app && w.id !== res.window.id).length;
     const head = `${res.window.app}${res.window.title ? ` — ${res.window.title}` : ''}${others ? ` (front window; ${res.window.app} has ${others} more, which draw with text also searches)` : ''}`;
     if (!res.controls.length) return `${head}\n${res.note}`;
-    return `${head}\n${controlList(res.controls, res.texts)}${res.elsewhere?.length ? `\nElsewhere on the page (scrolled out of view): ${res.elsewhere.join(' | ')}` : ''}`;
+    return `${head}${res.note ? `\n${res.note}` : ''}\n${controlList(res.controls, res.texts)}${res.elsewhere?.length ? `\nElsewhere on the page (scrolled out of view): ${res.elsewhere.join(' | ')}` : ''}`;
   }
   // A yes/no in an input bubble. Stop (or the turn ending) counts as no.
   // Only the yes/no is skipped (skipAllow: the user turned "Skip Allow prompts" on). BLOCK verdicts never reach here.

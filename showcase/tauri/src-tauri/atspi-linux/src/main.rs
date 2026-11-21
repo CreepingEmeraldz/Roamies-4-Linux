@@ -153,6 +153,8 @@ fn win_info(w: &Win, bus: &Bus) -> Value {
 }
 
 const MAX_NODES: usize = 6000;
+/// A busy web page has thousands of links; the model gets the first screenfuls, like the Windows helper's 260.
+const MAX_CONTROLS: usize = 260;
 const MAX_DEPTH: usize = 40;
 
 struct Read {
@@ -165,7 +167,7 @@ struct Read {
 }
 
 fn walk(bus: &Bus, el: &El, depth: usize, r: &mut Read) {
-    if depth > MAX_DEPTH || r.nodes >= MAX_NODES || r.started.elapsed() > Duration::from_secs(8) {
+    if depth > MAX_DEPTH || r.nodes >= MAX_NODES || r.controls.len() >= MAX_CONTROLS || r.started.elapsed() > Duration::from_secs(8) {
         return;
     }
     r.nodes += 1;
@@ -289,7 +291,9 @@ fn main() {
             if arg(2) == Some("controls") {
                 out(json!({ "ok": true, "window": info, "controls": r.controls }))
             }
-            let note = if r.controls.is_empty() && r.on.is_empty() {
+            let note = if r.controls.len() >= MAX_CONTROLS {
+                "Only the first controls are listed (this page has many more); its text is below. To use others, search for them by their words."
+            } else if r.controls.is_empty() && r.on.is_empty() {
                 "This app shares no controls. Chromium-based browsers need accessibility on: if Roamies just switched it on, restart the browser once. Otherwise use a screenshot."
             } else {
                 ""
