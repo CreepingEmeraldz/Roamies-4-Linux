@@ -491,6 +491,13 @@
     const step = (bb, dt, env) => {
       bb.age += dt;
       const P = k.P;
+      // The thinking tag shows one short line of the newest words, and nobody can read it as it goes: it keeps up with
+      // the model instead of typing out a backlog (which kept it up for seconds after the model had stopped), and it
+      // is gone as soon as the thinking ends.
+      if (bb.kind === 'thought') {
+        const target = bb.text.length - (bb.ended ? 0 : 24);
+        if (target > bb.shown) { for (let i = Math.floor(bb.shown); i < target; i++) bb.at[i] = now - 1; bb.shown = target; }
+      }
       // reveal
       if (bb.wait > 0) bb.wait -= dt;
       else if (bb.shown < bb.text.length) {

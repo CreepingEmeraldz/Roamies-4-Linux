@@ -250,7 +250,7 @@ export function oneYesNoAtATime(ask) {
   };
 }
 
-export function createTools({ allowActions, ui, ask, openUrl, onCommitments, focus = null, firedReminders = () => [], showList, fmtWhen, commitmentsText, userName, onPlan = () => {}, speak = () => false, onHandoff = () => {}, watchClicks = () => {}, onInkGone = () => {}, askShell = async () => ({ ok: false, error: 'Roamies isn\'t running.' }), workdir = HOME, own = null, sideSearch = async () => null, pointScale = () => 'pixels', skipAllow = () => false, jobs = null, skills = null }) {
+export function createTools({ allowActions, ui, ask, openUrl, onCommitments, focus = null, firedReminders = () => [], showList, fmtWhen, commitmentsText, userName, onPlan = () => {}, speak = () => false, onHandoff = () => {}, onMissingDep = () => {}, watchClicks = () => {}, onInkGone = () => {}, askShell = async () => ({ ok: false, error: 'Roamies isn\'t running.' }), workdir = HOME, own = null, sideSearch = async () => null, pointScale = () => 'pixels', skipAllow = () => false, jobs = null, skills = null }) {
   // Relative paths (and run_command) start in workdir: ~/Roamies for the chat, its own folder for an agent.
   const at = (p) => { const s = String(p ?? ''); return /^~(?=$|\/|\\)/.test(s) || path.isAbsolute(s) || /^[a-z]:[\\/]/i.test(s) ? s : path.join(workdir, s); };
   const where = workdir === HOME ? "the user's home folder" : `its working folder (${workdir})`;
@@ -373,7 +373,7 @@ export function createTools({ allowActions, ui, ask, openUrl, onCommitments, foc
     const t0 = Date.now();
     shot.words ??= readWords(shot.file);
     let words;
-    try { words = await shot.words; } catch (e) { console.error(`[ocr] reading the screenshot failed: ${e.message}`); throw e; }
+    try { words = await shot.words; } catch (e) { console.error(`[ocr] reading the screenshot failed: ${e.message}`); if (e.missing) onMissingDep('tesseract'); throw e; }
     const [x0, y0, bw, bh] = lastShot.bounds;
     const kx = bw / shot.px[0], ky = bh / shot.px[1];
     const found = findWords(words, find).map((m) => ({ text: m.text, bounds: [x0 + m.bounds[0] * kx, y0 + m.bounds[1] * ky, m.bounds[2] * kx, m.bounds[3] * ky] }));

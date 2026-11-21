@@ -38,6 +38,7 @@ import { EMOTES, EchoFilter, ReplyStream } from './reply.mjs';
 import { downloadModel, isReady, modelDir, sizeLabel, totalBytes } from './voicemodel.mjs';
 import { copyText, createTools, expand, fitImage, imageBlock, oneYesNoAtATime, winOpen } from './tools.mjs';
 import { checkFork } from './forkupdate.mjs';
+import { checkDeps } from './deps.mjs';
 import { describeMarks } from './marks.mjs';
 import { faviconFor } from './draw.mjs';
 import { QUESTIONS, openNote, answerTurn, wantsSkip, endsChat, splitTurn, plain, stripNote, tourBeats, goalFrom, showcaseBeats } from './intro.mjs';
@@ -637,6 +638,13 @@ const { tools, hands, whereNow, frontNow: frontData, frontBounds, ink, nextTurn 
   allowActions: () => config.allowActions, skipAllow: () => !!config.allowActions && !!config.skipAllow, ui, ask, openUrl, userName,
   speak: (line) => { if (!turnVoice) return false; turnVoice.say(line); return true; },
   onHandoff: (task) => { activity.handoff(task); panel(); },
+  // Once per run: say what is missing and where to find it, instead of marks quietly landing on guesses.
+  onMissingDep: (id) => {
+    if (missingTold.has(id)) return;
+    missingTold.add(id);
+    say('I can\'t read the words on your screen without tesseract, so my pointing is only a guess. Open the Needs page in my panel for the install line.', 'concerned');
+    refreshDeps().then(() => panel()).catch(() => {});
+  },
   commitmentsText: () => [commitmentsText(), doneTodayText() && `Done today:\n${doneTodayText()}`].filter(Boolean).join('\n'),
   onCommitments: (c) => { menu(); scheduleReminders(); showList({ flash: c?.id, seconds: 6 }); syncSoon(); },
   showList: () => showList({ seconds: 20 }),
@@ -2238,10 +2246,19 @@ function panel() {
 let panelTab = null;
 function openPanel(tab) { panelTab = tab; send({ type: 'panel_show' }); if (panelOpen) panel(); }
 const panelNote = (text, bad = false, p = null) => panelOpen && send({ type: 'panel', msg: { kind: 'note', text, bad, ...(p ? linked(p) : {}) } });
+// Linux: what Roamies needs from the desktop (deps.mjs), checked when the panel opens and when asked again.
+let depsList = null;
+const missingTold = new Set();
+async function refreshDeps() {
+  if (!LINUX) return;
+  const osRelease = await fs.readFile('/etc/os-release', 'utf8').catch(() => '');
+  depsList = await checkDeps({ overlay: process.env.ROAMIES_OVERLAY || 'x11', session: SESSION, desktop: process.env.XDG_CURRENT_DESKTOP || '', osRelease }).catch((e) => { console.error('deps', e); return depsList; });
+}
 function panelState() {
   const current = getModel(config.model);
   const doing = activity.doing();
   return {
+    deps: LINUX ? depsList : null,
     version: VERSION, whatsNewFrom: config.whatsNewFrom ?? null, os: MAC ? 'mac' : process.platform === 'win32' ? 'win' : LINUX ? 'linux' : 'other', snap: SNAP_OK,
     // Wayland: shortcuts are commands bound in the desktop's settings (bind), and there's no Cursor size.
     wayland: WAYLAND, bind: HOTKEYS_OK ? null : BIND,
@@ -2885,7 +2902,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
   let m;
   try { m = JSON.parse(line); } catch { return; }
   if (m.type === 'menu') onMenu(m.id, m.via).catch((e) => console.error('menu', e));
-  else if (m.type === 'panel_open') { panelOpen = true; panelAt = Date.now(); logLine('panel_open', {}); if (VOICE_OK) send({ type: 'voice_mics' }); Promise.all([refreshAuth(), signedIn.get('local') && syncLocal(), tts().local && speech.checkLocal()]).catch(() => {}).finally(() => { panel(); refreshCatalogs(); }); }
+  else if (m.type === 'panel_open') { panelOpen = true; panelAt = Date.now(); logLine('panel_open', {}); if (VOICE_OK) send({ type: 'voice_mics' }); Promise.all([refreshDeps(), refreshAuth(), signedIn.get('local') && syncLocal(), tts().local && speech.checkLocal()]).catch(() => {}).finally(() => { panel(); refreshCatalogs(); }); }
   else if (m.type === 'diagnostics') { shellInfo?.(m); shellInfo = null; }
   else if (m.type === 'panel_closed') { panelOpen = false; logLine('panel_closed', { why: String(m.why ?? ''), ms: Date.now() - panelAt }); }
   else if (m.type === 'panel_key' && typeof m.provider === 'string' && typeof m.key === 'string') {
@@ -2943,6 +2960,11 @@ createInterface({ input: process.stdin }).on('line', (line) => {
   else if (m.type === 'user_click' && Number.isFinite(m.x) && Number.isFinite(m.y)) ink.userClick({ x: m.x, y: m.y, role: String(m.role ?? ''), app: String(m.app ?? ''), acts: m.acts === true });
   else if (m.type === 'update_status') onUpdateStatus(m);
   // Wayland: the guide or panel copies one of the commands to bind (only those, never other text).
+  else if (m.type === 'copy_text' && LINUX && typeof m.id === 'string') {
+    // The fix line of a dependency, as the check made it (never text from the page).
+    const d = depsList?.find((x) => x.id === m.id);
+    if (d?.fix) shellCall({ type: 'clipboard', text: d.fix }).then((r) => send({ type: 'panel', msg: { kind: 'copied', which: `dep-${m.id}`, ok: !!r?.ok } }));
+  } else if (m.type === 'recheck_deps' && LINUX) refreshDeps().then(() => panel());
   else if (m.type === 'copy_bind' && Object.hasOwn(BIND, String(m.which))) shellCall({ type: 'clipboard', text: BIND[m.which] }).then((r) => send({ type: onboarding ? 'onboard' : 'panel', msg: { kind: 'copied', which: String(m.which), ok: !!r?.ok } }));
   // Copy details: the last error someone saw, with the version and OS, scrubbed (never other text).
   else if (m.type === 'copy_problem') copyProblem(m.from).catch((e) => console.error('copy problem', e));

@@ -1006,6 +1006,20 @@
     }
     return ken;
   }
+  // Linux: what Roamies needs from the desktop, each with whether it's there, what it's for, and the line to install it.
+  function depsPage() {
+    const list = state.deps;
+    if (!list) return [group('Needs', 'Checking what Roamies needs…', null)];
+    const missing = list.filter((d) => !d.ok && !d.optional).length;
+    return [group('What Roamies needs', missing ? `${missing} missing: install ${missing > 1 ? 'them' : 'it'}, then check again.` : 'Everything Roamies needs is here.', null,
+      list.map((d) => el('div', { className: 'setting' },
+        el('span', {}, `${d.ok ? '✓' : d.optional ? '–' : '✗'} ${d.name}`,
+          el('small', { textContent: d.what }),
+          !d.ok && d.note ? el('small', { textContent: d.note }) : null,
+          !d.ok && d.fix ? el('small', { className: 'cmd', textContent: d.fix }) : null),
+        !d.ok && d.fix && d.id !== 'layer' ? link('Copy', () => send({ type: 'copy_text', id: d.id }), { k: `dep-${d.id}`, aria: `Copy the install command for ${d.name}` }) : null)),
+      el('div', { className: 'links' }, link('Check again', () => send({ type: 'recheck_deps' }), { k: 'recheck-deps' })))];
+  }
   function aboutPage() {
     return [
       group('Made by', null, null, maker(),
@@ -1059,10 +1073,11 @@
   }
 
   // ---------------------------------------------------------------- render
-  const PANES = { home, memory, abilities: abilitiesPage, model: modelPage, appearance: appearancePage, speaking: speakingPage, listening: listeningPage, shortcuts: shortcutsPage, general: generalPage, about: aboutPage, whatsnew: whatsNewPage };
+  const PANES = { home, memory, abilities: abilitiesPage, model: modelPage, appearance: appearancePage, speaking: speakingPage, listening: listeningPage, shortcuts: shortcutsPage, general: generalPage, deps: depsPage, about: aboutPage, whatsnew: whatsNewPage };
   // focusKey: what to focus after (a data-k, or an element id); otherwise whatever had focus keeps it.
   function render(focusKey, animate = false) {
     if (!state) return;
+    $('li-deps').hidden = state.os !== 'linux';
     const active = document.activeElement;
     // Never rebuild under someone typing a key: catch up when they leave the field.
     if (!focusKey && !animate && active?.tagName === 'INPUT' && active.closest('.pane')) { deferred = true; return; }
@@ -1220,6 +1235,7 @@
     }
     else if (m.kind === 'note') note(m.text, m.bad, m.copy);
     else if (m.kind === 'copied' && m.which === 'problem') note(m.ok ? 'Copied the error details. Paste them into your report.' : "Couldn't copy the error details. Try Save diagnostics.", !m.ok);
+    else if (m.kind === 'copied' && String(m.which).startsWith('dep-')) note(m.ok ? 'Copied. Paste it into a terminal.' : "Couldn't copy it. Select the command and copy it instead.", !m.ok);
     else if (m.kind === 'copied') {
       if (!m.ok && state?.bind?.[m.which]) { ui.bindShown.add(m.which); render(`bind-${m.which}`); }
       note(m.ok ? 'Copied. Paste it into a new custom shortcut.' : "Couldn't copy it. Select the command and copy it instead.", !m.ok);

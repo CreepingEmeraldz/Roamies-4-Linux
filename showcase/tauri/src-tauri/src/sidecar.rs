@@ -70,6 +70,9 @@ pub(crate) fn spawn_sidecar(app: &AppHandle) {
     if crate::linux::native_wayland() {
         cmd.env("ROAMIES_POINTER", "1");
     }
+    // How the overlay is made, for the panel's Dependencies page: a layer-shell surface, an XWayland window, or X11.
+    #[cfg(target_os = "linux")]
+    cmd.env("ROAMIES_OVERLAY", if crate::linux::native_wayland() { "layer" } else if crate::linux::session() == crate::linux::Session::Wayland { "xwayland" } else { "x11" });
     if let Some(dir) = script.parent() {
         cmd.current_dir(dir);
     }
