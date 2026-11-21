@@ -39,7 +39,7 @@ tried. GNOME and KDE use upstream's path (see below). Bug reports with your comp
 | Marks snap to the words on screen | Yes                          | Yes, if tesseract is installed (see Install)                  |
 | Circle things while talking      | Yes                          | No (needs the cursor)                                         |
 | Read windows (controls and text) | Yes                          | Yes, read only, over the accessibility bus (see below)        |
-| Click and type in other apps     | Yes                          | No                                                            |
+| Click and type in other apps     | Yes                          | By label, over the accessibility bus (keys need wtype)        |
 | Shortcuts                        | Global keys                  | Keys you bind in your compositor (X11 sessions get real ones) |
 | Updates itself                   | Yes                          | No: download the new AppImage from Releases                   |
 
@@ -57,7 +57,13 @@ a small bundled helper (`roamies-atspi`). The AI gets an app's buttons, links an
 scrolled out of view, without a screenshot. Roamies switches the accessibility flag on by itself when it reads. Chromium
 browsers (Brave, Chrome) only build their page tree once it is on, so a browser that was already running may need a restart
 the first time. Apps that publish nothing (some games, some Electron apps) give an empty list, and the AI falls back to a screenshot.
-It only reads: clicking and typing in other apps isn't there yet.
+
+### Working other apps
+
+`act_in_app` presses buttons and links with the control's own action (no pointer needed), fills ordinary fields, and
+picks options, all by label. Typing into web page fields (Brave, Chrome) and pressing keys need `wtype` (`sudo apt install wtype`,
+it uses the compositor's virtual keyboard, so it depends on your compositor allowing that). There is no scrolling, hovering or
+clicking at pixels in other apps: `read_window` already shows the whole page. Delete, pay, send and sign-out clicks still ask you first.
 
 ## Install
 

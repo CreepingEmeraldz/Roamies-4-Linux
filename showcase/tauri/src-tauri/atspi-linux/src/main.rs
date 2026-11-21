@@ -4,6 +4,7 @@
 //
 // Read only. Controls are numbered 1.. in the order they are read; the numbers only mean something to this one reading.
 // Every JSON answer is one line on stdout; a failure is {"ok":false,"error":"..."} and exit code 1.
+mod act;
 mod logic;
 
 use serde_json::{json, Value};
@@ -159,6 +160,8 @@ const MAX_DEPTH: usize = 40;
 
 struct Read {
     controls: Vec<Value>,
+    /// The element behind each control, in the same order (control id n is els[n-1]).
+    els: Vec<El>,
     on: Vec<(f64, f64, String)>,
     off: Vec<(f64, String)>,
     seen: std::collections::HashSet<String>,
@@ -230,6 +233,7 @@ fn walk(bus: &Bus, el: &El, depth: usize, r: &mut Read) {
                         c["offscreen"] = json!(true);
                     }
                     r.controls.push(c);
+                    r.els.push(el.clone());
                 }
             }
             logic::Kind::Text => {
@@ -285,8 +289,14 @@ fn main() {
             let bus = Bus::open().unwrap_or_else(|e| fail(&e));
             let wins = windows(&bus);
             let Some(w) = pick(&wins, arg(1).unwrap_or("front")) else { fail("No matching window is open.") };
-            let mut r = Read { controls: vec![], on: vec![], off: vec![], seen: Default::default(), nodes: 0, started: Instant::now() };
+            let mut r = Read { controls: vec![], els: vec![], on: vec![], off: vec![], seen: Default::default(), nodes: 0, started: Instant::now() };
             walk(&bus, &w.el, 0, &mut r);
+            // Chromium builds its page tree only once accessibility is on, which the first read just switched on: wait and look again.
+            if r.controls.is_empty() && r.on.is_empty() {
+                std::thread::sleep(Duration::from_millis(1500));
+                r = Read { controls: vec![], els: vec![], on: vec![], off: vec![], seen: Default::default(), nodes: 0, started: Instant::now() };
+                walk(&bus, &w.el, 0, &mut r);
+            }
             let info = win_info(w, &bus);
             if arg(2) == Some("controls") {
                 out(json!({ "ok": true, "window": info, "controls": r.controls }))
@@ -300,6 +310,23 @@ fn main() {
             };
             out(json!({ "ok": true, "window": info, "controls": r.controls, "texts": logic::page_text(r.on, 5000), "elsewhere": logic::offscreen_text(r.off, 4000), "note": note }))
         }
-        _ => fail("usage: roamies-atspi windows | ui <front|app:NAME|window:ID> [controls] | enable"),
+        Some("act") => {
+            let _ = enable();
+            let bus = Bus::open().unwrap_or_else(|e| fail(&e));
+            let Some(plan) = arg(1).and_then(|p| serde_json::from_str::<Value>(p).ok()) else { fail("usage: roamies-atspi act <json plan>") };
+            let spec = if let Some(w) = plan["window"].as_str() { format!("window:{w}") } else if let Some(a) = plan["app"].as_str() { format!("app:{a}") } else { "front".into() };
+            let wins = windows(&bus);
+            let Some(w) = pick(&wins, &spec) else { fail("No matching window is open.") };
+            match act::run(&bus, w, &plan["steps"]) {
+                Ok(done) => {
+                    std::thread::sleep(Duration::from_millis(500));
+                    let mut r = Read { controls: vec![], els: vec![], on: vec![], off: vec![], seen: Default::default(), nodes: 0, started: Instant::now() };
+                    walk(&bus, &w.el, 0, &mut r);
+                    out(json!({ "ok": true, "done": done, "window": win_info(w, &bus), "controls": r.controls, "texts": logic::page_text(r.on, 3000) }))
+                }
+                Err(e) => fail(&e),
+            }
+        }
+        _ => fail("usage: roamies-atspi windows | ui <front|app:NAME|window:ID> [controls] | act <json> | enable"),
     }
 }

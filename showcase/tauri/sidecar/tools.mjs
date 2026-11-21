@@ -135,6 +135,7 @@ const actionsOff = `File edits and commands are switched off. Tell the user to t
 // macOS, hands-win on Windows; same commands and JSON). A .mjs one (a test's fake) runs on this Node.
 const HANDS = process.env.ROAMIES_HANDS || '';
 // Linux: the bundled accessibility helper (roamies-atspi), which only reads: list_windows and read_window.
+const LINUX_ACT = "Do things in another app, over its accessibility tree: press buttons and links, fill fields, pick options, press keys. Steps run in order: put a whole task in one call. {do:'click_text', text}: a link, button or tab by its visible words. {do:'fill', field, text}: one text field by its label (or id); replaces its text and checks it took. {do:'choose', field, option}: an option in a dropdown or menu. {do:'click', id} and {do:'focus', id} use ids from read_window. {do:'type', text} only with the cursor already in a field; {do:'key', key} ('return', 'tab', 'escape', 'ctrl+a') needs the wtype tool, so press a Search or Submit button with click_text when you can. No scrolling, hovering or clicking at pixels here: read_window shows the whole page, scrolled out of view too. Web addresses: use open, not the address bar. The result shows the window after the steps, with fresh ids and values: check it there. Never pay, send or delete unless asked for exactly that; delete, pay, send and sign-out clicks ask the user themselves, so call this straight away when asked to click one.";
 const ATSPI = LINUX ? process.env.ROAMIES_ATSPI || '' : '';
 const runHands = (args, opts) => (HANDS.endsWith('.mjs') ? run(process.execPath, [HANDS, ...args], opts) : run(HANDS, args, opts));
 const STALE_ID = 'The page changed since read_window, so that id is out of date. Call read_window again and use the new ids.';
@@ -285,7 +286,7 @@ export function createTools({ allowActions, ui, ask, openUrl, onCommitments, foc
     };
   }
   async function hands(...args) {
-    if (!HANDS) throw new Error('This needs the Roamies app.');
+    if (!HANDS) { if (ATSPI) return atspi(...args); throw new Error('This needs the Roamies app.'); }
     // Acting in an app may take the real cursor: meanwhile clicks go through the overlay, even where the Sidekick or
     // its bubble sits on the spot being clicked.
     const acting = args[0] === 'act';
@@ -321,12 +322,11 @@ export function createTools({ allowActions, ui, ask, openUrl, onCommitments, foc
     if (res.ok === false) throw new Error(res.error || 'That did not work.');
     return res;
   }
-  const look = HANDS || !ATSPI ? hands : atspi;
   async function readWindow(target = 'front') {
     const t = String(target || 'front');
-    const read = () => Promise.all([look('ui', t === 'front' ? 'front' : `app:${t}`), look('windows').catch(() => null)]);
+    const read = () => Promise.all([hands('ui', t === 'front' ? 'front' : `app:${t}`), hands('windows').catch(() => null)]);
     const [res, all] = await read().catch(async (err) => {
-      if (t === 'front' || !/No matching window/.test(String(err?.message ?? err)) || !(await launchApp(t, look))) throw err;
+      if (t === 'front' || !/No matching window/.test(String(err?.message ?? err)) || !(await launchApp(t, hands))) throw err;
       return read();
     });
     lastRead = { win: res.window.id, app: res.window.app, controls: res.controls, turn };
@@ -829,25 +829,8 @@ export function createTools({ allowActions, ui, ask, openUrl, onCommitments, foc
       description: "Look at the screen, only for what words can't show (images, layout, colours). target: 'front' (the window they're in: the default for 'this' or 'here'), an app name ('browser', 'Figma'; works behind other windows), 'window:<id>' from list_windows, or 'screen' (only when it must be everything).",
       parameters: z.object({ target: z.string().optional() }), execute: screenshot,
     },
-    // Linux: reading only, over the accessibility bus. Working other apps needs the hands helper, which Linux doesn't have.
-    ...(ATSPI && !HANDS ? [
-      {
-        name: 'list_windows', description: 'List the open app windows (app, title, id), front to back.',
-        parameters: z.object({}),
-        execute: async () => {
-          const res = await atspi('windows');
-          return res.windows.map((w) => `window:${w.id}  ${w.app}${w.title ? ` — ${w.title}` : ''}${w.frontApp ? '  (frontmost app)' : ''}`).join('\n') || 'No windows open.';
-        },
-      },
-      {
-        name: 'read_window',
-        description: "List an app window's controls (role, label, value) and all its text, including what's scrolled out of view, so you can read a whole page without scrolling or a screenshot. Reading only: you can't click or type in other apps. Browsers based on Chromium (Brave, Chrome) show their page only when accessibility is on; if the list is empty, say the browser may need a restart once.",
-        parameters: z.object({ target: z.string().optional() }),
-        execute: async ({ target = 'front' }) => readWindow(target),
-      },
-    ] : []),
     // The hands helper's tools: on macOS always (they explain what's missing), elsewhere when the helper is there.
-    ...(process.platform === 'darwin' || HANDS ? [
+    ...(process.platform === 'darwin' || HANDS || ATSPI ? [
       {
         name: 'list_windows', description: 'List the open app windows (app, title, id), front to back.',
         parameters: z.object({}),
@@ -858,13 +841,13 @@ export function createTools({ allowActions, ui, ask, openUrl, onCommitments, foc
       },
       {
         name: 'read_window',
-        description: "List an app window's controls (id, role, label, value) and all its text, including what's scrolled out of view, so you can read a whole page without scrolling or a screenshot. Needed for act_in_app ids; not for marking or clicking by visible words (draw or click_text do that). target: 'front', an app name, or 'browser'.",
+        description: (!HANDS && ATSPI ? 'Use this first whenever you are asked what is in an app, browser tab or window (never niri msg or other shell commands). ' : '') + "List an app window's controls (id, role, label, value) and all its text, including what's scrolled out of view, so you can read a whole page without scrolling or a screenshot. Needed for act_in_app ids; not for marking or clicking by visible words (draw or click_text do that). target: 'front', an app name, or 'browser'.",
         parameters: z.object({ target: z.string().optional() }),
         execute: async ({ target = 'front' }) => readWindow(target),
       },
       {
         name: 'act_in_app',
-        description: "Do things in another app: click, fill forms, pick from dropdowns and date pickers, scroll, press keys. Steps run in order: put a whole task in one call. {do:'click_text', text}: a link, button or tab by its visible words (no read_window needed). {do:'fill', field, text}: one text field by its label, placeholder or id; replaces its text and checks it took (never click a label and type). {do:'choose', field, option}: an option in a dropdown, menu, type-to-search box or picker, however long the list (never scroll a list yourself). {do:'hover', text, near} (or id, or x, y): rests the pointer to show hidden controls (a ⋯ menu), then click_text what appears, in the same call. {do:'scroll', direction, amount, text or id}: only for content that loads as you scroll; to_end: true keeps going until a feed stops loading (things already on the page need no scrolling: click_text, fill and draw find them). {do:'click', id}; {do:'key', key} ('return', 'tab', 'escape'); {do:'type', text} only with the cursor already in a field; {do:'click_at', x, y} screenshot pixels, last resort; {do:'wait', seconds}. near: words from one item (its author, a post's first words) when many controls look alike (a Reply under every post). Dates: fill them as the page writes them (10/30/2026); if a calendar opens, choose the month and year, then click_text the day. Web addresses: use open, not the address bar; to search a site, open its search URL (youtube.com/results?search_query=…) unless asked to use its box (then fill it and press return). The result shows the window after the steps, with fresh ids and values: check it there, not with read_window. Every item on a long page: to_end if it loads more, one read_window, then one call doing every item with near; never survey a page by scrolling and screenshots. Never pay, send or delete unless asked for exactly that; pointing at a button isn't a request to click it. Delete, pay, send and sign-out clicks ask the user themselves, so when asked to click one, call this straight away instead of asking.",
+        description: !HANDS ? LINUX_ACT : "Do things in another app: click, fill forms, pick from dropdowns and date pickers, scroll, press keys. Steps run in order: put a whole task in one call. {do:'click_text', text}: a link, button or tab by its visible words (no read_window needed). {do:'fill', field, text}: one text field by its label, placeholder or id; replaces its text and checks it took (never click a label and type). {do:'choose', field, option}: an option in a dropdown, menu, type-to-search box or picker, however long the list (never scroll a list yourself). {do:'hover', text, near} (or id, or x, y): rests the pointer to show hidden controls (a ⋯ menu), then click_text what appears, in the same call. {do:'scroll', direction, amount, text or id}: only for content that loads as you scroll; to_end: true keeps going until a feed stops loading (things already on the page need no scrolling: click_text, fill and draw find them). {do:'click', id}; {do:'key', key} ('return', 'tab', 'escape'); {do:'type', text} only with the cursor already in a field; {do:'click_at', x, y} screenshot pixels, last resort; {do:'wait', seconds}. near: words from one item (its author, a post's first words) when many controls look alike (a Reply under every post). Dates: fill them as the page writes them (10/30/2026); if a calendar opens, choose the month and year, then click_text the day. Web addresses: use open, not the address bar; to search a site, open its search URL (youtube.com/results?search_query=…) unless asked to use its box (then fill it and press return). The result shows the window after the steps, with fresh ids and values: check it there, not with read_window. Every item on a long page: to_end if it loads more, one read_window, then one call doing every item with near; never survey a page by scrolling and screenshots. Never pay, send or delete unless asked for exactly that; pointing at a button isn't a request to click it. Delete, pay, send and sign-out clicks ask the user themselves, so when asked to click one, call this straight away instead of asking.",
         parameters: z.object({
           target: z.string().optional(),
           steps: z.array(z.object({
@@ -928,7 +911,7 @@ export function createTools({ allowActions, ui, ask, openUrl, onCommitments, foc
             }
             delete s.label;
           }
-          const plan = { steps: mapped, ...(t === 'front' ? {} : t.startsWith('window:') ? { window: +t.slice(7) } : { app: t }) };
+          const plan = { steps: mapped, ...(t === 'front' ? {} : t.startsWith('window:') ? { window: HANDS ? +t.slice(7) : t.slice(7) } : { app: t }) };
           const act = () => hands('act', JSON.stringify(plan));
           let res;
           try {

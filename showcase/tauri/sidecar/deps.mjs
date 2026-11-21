@@ -52,6 +52,15 @@ export async function checkDeps({ overlay, session, desktop, osRelease, run = ru
   });
 
   if (session === 'wayland') {
+    const wt = await has('wtype');
+    out.push({
+      id: 'wtype', name: 'wtype (keys in other apps)', ok: wt,
+      what: 'Lets Roamies press keys and type into web page fields in other apps (Brave, Chrome). Without it, it can still press buttons and fill ordinary app fields.',
+      ...(wt ? {} : { fix: installLine(osRelease, { apt: ['wtype'], dnf: ['wtype'], pacman: ['wtype'], zypper: ['wtype'] }) ?? 'Install wtype from your distro.' }),
+    });
+  }
+
+  if (session === 'wayland') {
     const portal = await run('gdbus', ['call', '--session', '--dest', 'org.freedesktop.DBus', '--object-path', '/org/freedesktop/DBus', '--method', 'org.freedesktop.DBus.NameHasOwner', 'org.freedesktop.portal.Desktop']);
     const ok = portal != null && /true/.test(portal);
     out.push({
