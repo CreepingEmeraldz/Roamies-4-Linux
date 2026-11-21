@@ -359,11 +359,13 @@ export function createTools({ allowActions, ui, ask, openUrl, onCommitments, foc
     ocrFiles = [];
     const full = `${file}.full.png`;
     const png = await fs.readFile(full).then((b) => pngSize(b), () => null);
-    if (png) { ocrFiles = [full]; return { file: full, px: png, words: null }; }
+    // Reading starts now, while the model is still looking at the picture, so the words are ready when it asks for one.
+    const start = (f) => { const w = readWords(f); w.catch(() => {}); return w; };
+    if (png) { ocrFiles = [full]; return { file: full, px: png, words: start(full) }; }
     const copy = `${file}.ocr.jpg`;
     const ok = await fs.copyFile(file, copy).then(() => true, () => false);
     if (ok) ocrFiles = [copy];
-    return ok ? { file: copy, px: small, words: null } : null;
+    return ok ? { file: copy, px: small, words: start(copy) } : null;
   }
   async function ocrMatches(find) {
     const shot = lastShot?.ocr;

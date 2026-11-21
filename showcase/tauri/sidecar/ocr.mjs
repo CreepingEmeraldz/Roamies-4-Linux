@@ -49,7 +49,11 @@ export function findWords(words, find) {
 /** The words tesseract reads in an image file. Rejects with `missing: true` when tesseract isn't installed. */
 export function readWords(file, { timeout = 30000 } = {}) {
   return new Promise((resolve, reject) => {
-    const p = spawn('tesseract', [file, 'stdout', '--psm', '11', '-l', 'eng', '-c', 'thresholding_method=1', 'tsv'], { stdio: ['ignore', 'pipe', 'ignore'] });
+    const p = spawn('tesseract', [file, 'stdout', '--psm', '11', '-l', 'eng', '-c', 'thresholding_method=1', 'tsv'], {
+      stdio: ['ignore', 'pipe', 'ignore'],
+      // One thread: tesseract's own threads fight over the cores and, on a many-core laptop, take several times longer.
+      env: { ...process.env, OMP_THREAD_LIMIT: '1' },
+    });
     let out = '', done = false;
     const end = (fn, v) => { if (done) return; done = true; clearTimeout(t); fn(v); };
     const t = setTimeout(() => { p.kill('SIGKILL'); end(reject, new Error('Reading the screen took too long.')); }, timeout);
