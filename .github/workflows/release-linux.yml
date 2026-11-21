@@ -1,5 +1,5 @@
 # Linux-only release for this fork: tag a version (e.g. `git tag v0.1.44-linux1 && git push origin v0.1.44-linux1`) or
-# run it by hand from the Actions tab (it then builds the version in tauri.conf.json and tags it v<version>-linux).
+# run it by hand from the Actions tab (it then builds the version in tauri.conf.json and tags it v<version>-linux.N, N counting up).
 # Builds the AppImage (plus .deb and .rpm) unsigned and attaches them to a published GitHub release.
 # No Apple, Windows or updater-signing secrets are needed: update bundles are switched off for this build.
 name: Release (Linux)
@@ -69,17 +69,28 @@ jobs:
           TAURI_BUNDLES: appimage,deb,rpm
         run: ./build.sh release --target x86_64-unknown-linux-gnu --config '{"bundle":{"createUpdaterArtifacts":false}}'
 
+      # A run by hand makes the next release of this version: v0.1.46-linux.1, then .2, and so on (the first run of a new
+      # upstream version starts again at .1). A pushed tag is used as it is. The newest release is marked as the latest.
       - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          VERSION="$(sed -n 's/^  "version": "\(.*\)",/\1/p' src-tauri/tauri.conf.json | head -1)"
           TAG="$GITHUB_REF_NAME"
           if [[ "$GITHUB_REF_TYPE" != tag ]]; then
-            TAG="v$(sed -n 's/^  "version": "\(.*\)",/\1/p' src-tauri/tauri.conf.json | head -1)-linux"
+            LAST="$(gh release list -R "$GITHUB_REPOSITORY" --limit 200 --json tagName -q '.[].tagName' \
+              | sed -n "s/^v${VERSION//./\\.}-linux\.\([0-9][0-9]*\)$/\1/p" | sort -n | tail -1)"
+            TAG="v${VERSION}-linux.$(( ${LAST:-0} + 1 ))"
           fi
+          LABEL="${TAG#v}"
+          echo "Releasing $TAG"
           B=src-tauri/target/x86_64-unknown-linux-gnu/release/bundle
-          files=($B/appimage/*.AppImage $B/deb/*.deb $B/rpm/*.rpm)
-          ls -la "${files[@]}"
-          gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1 \
-            || gh release create "$TAG" -R "$GITHUB_REPOSITORY" --title "Roamies $TAG (Linux)" --notes "Install tesseract too (sudo apt install tesseract-ocr) so drawings land on the right words. Setup and shortcuts: docs/LINUX.md." --generate-notes --target "$GITHUB_SHA"
-          gh release upload "$TAG" -R "$GITHUB_REPOSITORY" --clobber "${files[@]}"
+          mkdir -p out
+          cp $B/appimage/*.AppImage "out/Roamies_${LABEL}_amd64.AppImage"
+          cp $B/deb/*.deb "out/Roamies_${LABEL}_amd64.deb"
+          cp $B/rpm/*.rpm "out/Roamies-${LABEL}.x86_64.rpm"
+          ls -la out
+          gh release create "$TAG" -R "$GITHUB_REPOSITORY" --title "Roamies $LABEL (Linux)" --latest \
+            --notes "Install tesseract too (sudo apt install tesseract-ocr) so drawings land on the right words. Setup and shortcuts: docs/LINUX.md." \
+            --generate-notes --target "$GITHUB_SHA"
+          gh release upload "$TAG" -R "$GITHUB_REPOSITORY" --clobber out/*
