@@ -556,7 +556,7 @@
       return true;
     };
     const resize = () => {
-      W = innerWidth; H = innerHeight; dpr = Math.min(2, devicePixelRatio || 1);
+      W = innerWidth; H = innerHeight; dpr = Math.min(window.ROAMIE_DPR_CAP || 2, devicePixelRatio || 1);
       cw = ch = 0;
       for (const o of list) { o.env.w = W; o.env.h = H; o.env.dpr = dpr; o.c.resize?.(o.env); }
     };
@@ -745,7 +745,7 @@
       const resize = () => {
         const r = canvas.getBoundingClientRect();
         T.rect = r;
-        env.dpr = Math.min(2, devicePixelRatio || 1);
+        env.dpr = Math.min(window.ROAMIE_DPR_CAP || 2, devicePixelRatio || 1);
         env.w = Math.max(1, r.width); env.h = Math.max(1, r.height);
         canvas.width = Math.round(env.w * env.dpr); canvas.height = Math.round(env.h * env.dpr);
         if (!T.creature) {

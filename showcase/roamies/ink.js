@@ -123,12 +123,12 @@
   view.setAttribute('aria-hidden', 'true');
   Object.assign(view.style, { position: 'fixed', left: '0', top: '0', width: '100vw', height: '100vh', pointerEvents: 'none', visibility: 'hidden', cursor: 'default' });
   const V = view.getContext('2d'), Lc = litC.getContext('2d');
-  const hasFilter = 'filter' in V;
+  const hasFilter = 'filter' in V && !window.ROAMIE_NOGLOW;
   let W = innerWidth, H = innerHeight, DPR = 1, alloc = false;
   const mount = () => { const st = document.getElementById('stage'); if (st?.parentNode) st.parentNode.insertBefore(view, st); else document.body.appendChild(view); };
   if (document.body) mount(); else document.addEventListener('DOMContentLoaded', mount);
   function allocate() {
-    W = innerWidth; H = innerHeight; DPR = Math.min(2, devicePixelRatio || 1);
+    W = innerWidth; H = innerHeight; DPR = Math.min(window.ROAMIE_DPR_CAP || 2, devicePixelRatio || 1);
     for (const c of [view, litC]) { c.width = Math.round(W * DPR); c.height = Math.round(H * DPR); }
     alloc = true; view.style.visibility = ''; lastU = null;
   }
@@ -1707,7 +1707,7 @@
     // The land is painted once, at the screen's sharpness, and reused every frame.
     let land = null;
     if (world) {
-      const dpr = Math.min(2, devicePixelRatio || 1);
+      const dpr = Math.min(window.ROAMIE_DPR_CAP || 2, devicePixelRatio || 1);
       land = document.createElement('canvas'); land.width = Math.round(mw * dpr); land.height = Math.round(mh * dpr);
       const lc = land.getContext('2d');
       // Land is only a little lighter than the card, so the coast is drawn: every outline stroked wide, then every

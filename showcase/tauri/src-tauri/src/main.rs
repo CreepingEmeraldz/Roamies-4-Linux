@@ -1171,6 +1171,12 @@ fn build_overlays(app: &AppHandle) -> tauri::Result<()> {
         // draws a strip by an auto-hidden taskbar, #58).
         #[cfg(target_os = "linux")]
         let init = format!("{init}window.ROAMIE_LINUX={:?};", linux::session().name());
+        // Speed experiments for a slow laptop: ROAMIES_DPR=1 (or 1.5) draws at lower resolution, ROAMIES_GLOW=0 skips the blurred glow.
+        let init = match std::env::var("ROAMIES_DPR").ok().and_then(|v| v.parse::<f64>().ok()).filter(|d| (0.5..=3.0).contains(d)) {
+            Some(d) => format!("{init}window.ROAMIE_DPR_CAP={d};"),
+            None => init,
+        };
+        let init = if std::env::var("ROAMIES_GLOW").as_deref() == Ok("0") { format!("{init}window.ROAMIE_NOGLOW=true;") } else { init };
         let init = if std::env::var_os("ROAMIES_PROFILE").is_some() { format!("{init}window.ROAMIE_PROF=true;") } else { init };
         #[cfg(not(target_os = "macos"))]
         let size = tauri::LogicalSize::new(size.width, size.height - 1.0);
