@@ -106,8 +106,9 @@ Set these in the environment of the app (a niri `spawn-at-startup` line or a `.d
 | `ROAMIES_LAYER=1` or `0`       | Force the layer-shell overlay on or off                                               |
 | `ROAMIES_TRACE=1`              | Print the click areas to stderr: shows whether the overlay is blocking your clicks    |
 | `ROAMIES_PROFILE=1`            | Log what the page spends its time on to `profile.log`                                 |
-| `ROAMIES_DMABUF=1`             | On layer-shell compositors Roamies turns WebKit's GPU-buffer path off (stale streaks showed on niri); this turns it back on for more smoothness |
-| `WEBKIT_DISABLE_DMABUF_RENDERER=1` | A black or missing overlay, often on NVIDIA (already the default on layer-shell compositors) |
+| `ROAMIES_DMABUF=0`             | Turns WebKit's GPU painting off (slower, but a fallback if the overlay misbehaves) |
+| `ROAMIES_FULLPAINT=0`          | On layer-shell compositors the whole overlay is repainted each frame (stops stale-frame flicker with GPU painting); this turns that off |
+| `WEBKIT_DISABLE_DMABUF_RENDERER=1` | A black or missing overlay, often on NVIDIA  |
 
 Each screenshot logs how long the desktop portal, the picture load and the resize took (`screenshot_time` in the app's log),
 which is the first thing to look at when screenshots feel slow.

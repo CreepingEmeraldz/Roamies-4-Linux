@@ -61,10 +61,11 @@ pub(crate) fn init() {
     let native = s == Session::Wayland && layer::wanted() && env("GDK_BACKEND").as_deref().map_or(true, |b| b.contains("wayland"));
     if native {
         std::env::set_var("GDK_BACKEND", "wayland");
-        // WebKit's GPU-buffer path leaves stale streaks and patches on a layer-shell overlay on some setups (seen on niri at a
-        // fractional scale, gone with it off, at the price of a little smoothness). Correct beats smooth here, so it is off
-        // unless asked for: ROAMIES_DMABUF=1 turns it back on, or set WEBKIT_DISABLE_DMABUF_RENDERER yourself.
-        if env("ROAMIES_DMABUF").as_deref() != Some("1") && std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
+        // WebKit paints on the GPU through its GPU-buffer (DMABUF) path, which is a lot smoother. On its own it can leave
+        // stale copies of the overlay on screen on a layer-shell surface (streaks, a flicker between two frames, seen on
+        // niri), so the page then repaints the whole screen each frame (ROAMIE_FULLPAINT, set in main.rs). ROAMIES_DMABUF=0
+        // turns the GPU path off, or set WEBKIT_DISABLE_DMABUF_RENDERER yourself.
+        if env("ROAMIES_DMABUF").as_deref() == Some("0") && std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
             std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
         }
         // The compositor might not have the protocol after all (ROAMIES_LAYER=1 on GNOME). GDK can't change backend

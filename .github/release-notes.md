@@ -6,9 +6,9 @@ This build includes everything from the main Roamies v0.1.49: the E20 fix, NVIDI
 
 While the AI is drawing, the overlay now repaints at most 30 times a second on Linux instead of as fast as it can. A profile from a Framework 13 showed each frame taking 20-30 ms, too slow for 60 fps, so this halves the painting work.
 
-## Trying GPU painting
+## GPU painting is back on, without the flicker
 
-With `ROAMIES_DMABUF=1` WebKit paints on the GPU and a fullscreen card is much smoother, but the overlay can flicker between two copies of itself. `ROAMIES_FULLPAINT=1` repaints the whole screen every frame to try to stop that. Both are experiments, so tell me how they go.
+WebKit's GPU painting is on by default again on layer-shell compositors (niri, sway, Hyprland, river), which makes a fullscreen card and drawing much smoother. It could leave stale copies of the overlay on screen, so Roamies now repaints the whole screen each frame in that mode, which stops the flicker and streaks. `ROAMIES_DMABUF=0` turns the GPU path off, and `ROAMIES_FULLPAINT=0` turns the full repaint off.
 
 ## Drawings and pointing land on the right words
 
@@ -17,10 +17,6 @@ Roamies reads the words on your screenshot with tesseract, so rings and marks go
 ## A Needs page
 
 Settings now lists what Roamies needs on Linux (tesseract, the layer-shell library and so on), shows what's missing, and gives the install command to copy. Roamies also tells you once if tesseract is missing.
-
-## Fewer rendering glitches
-
-The WebKit GPU-buffer renderer is now off by default on layer-shell compositors (niri, sway, Hyprland, river), which fixes the stale streaks. Set `ROAMIES_DMABUF=1` to turn it back on.
 
 ## Speed experiments for slow laptops
 

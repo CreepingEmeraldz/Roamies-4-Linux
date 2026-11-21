@@ -1190,7 +1190,7 @@ fn build_overlays(app: &AppHandle) -> tauri::Result<()> {
             None => init,
         };
         let init = if std::env::var("ROAMIES_GLOW").as_deref() == Ok("0") { format!("{init}window.ROAMIE_NOGLOW=true;") } else { init };
-        let init = if std::env::var("ROAMIES_FULLPAINT").as_deref() == Ok("1") { format!("{init}window.ROAMIE_FULLPAINT=true;") } else { init };
+        let init = if std::env::var("ROAMIES_FULLPAINT").map_or(std::env::var("GDK_BACKEND").as_deref() == Ok("wayland") && std::env::var("WEBKIT_DISABLE_DMABUF_RENDERER").as_deref() != Ok("1"), |v| v == "1") { format!("{init}window.ROAMIE_FULLPAINT=true;") } else { init };
         let init = if std::env::var_os("ROAMIES_PROFILE").is_some() { format!("{init}window.ROAMIE_PROF=true;") } else { init };
         #[cfg(not(target_os = "macos"))]
         let size = tauri::LogicalSize::new(size.width, size.height - 1.0);
