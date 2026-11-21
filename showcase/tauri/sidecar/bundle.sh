@@ -14,7 +14,9 @@ rm -rf dist && mkdir -p dist/node_modules
 # web_fetch (GG Coder's) loads its page and PDF readers by dynamic import, which a bundler can't follow: they stay
 # external and are copied below. linkedom is also bundled, because web_search imports it directly.
 WEB_EXT=(--external:@mozilla/readability --external:turndown --external:turndown-plugin-gfm --external:unpdf)
+# ROAMIES_BUILD: this fork's build number (0.1.46-linux.3), set by its release workflow; empty for any other build.
 "$ES" sidekick.mjs --bundle --platform=node --format=esm --target=node22 --outfile=dist/sidekick.mjs \
+  --define:__ROAMIES_BUILD__="\"${ROAMIES_BUILD:-}\"" \
   --external:@huggingface/transformers --external:ogg-opus-decoder "${WEB_EXT[@]}" \
   --banner:js="import { createRequire as __cr } from 'node:module'; const require = __cr(import.meta.url);" \
   --log-level=warning

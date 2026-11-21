@@ -1793,9 +1793,21 @@ fn login_item(app: &AppHandle, set: Option<bool>) {
 
 /// Checks the signed update feed (latest.json on the newest GitHub release). With `install`, downloads,
 /// verifies the signature, swaps the app in place and restarts. Progress goes to the sidecar as update_status.
-fn update(app: &AppHandle, install: bool) {
+fn update(app: &AppHandle, install: bool, version: Option<String>) {
     use tauri_plugin_updater::UpdaterExt;
     let app = app.clone();
+    // Linux (this fork): the sidecar checks the fork's releases itself (there is no signed feed); installing opens the
+    // download page.
+    #[cfg(target_os = "linux")]
+    {
+        if install {
+            linux::open_releases_page();
+            to_sidecar(&app, &json!({ "type": "update_status", "state": "page", "version": version.unwrap_or_default() }));
+        }
+        return;
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = &version;
     // Linux: only an AppImage can swap itself in place. A copy from a .deb or .rpm is told about the new version
     // (page: true) and "install" opens the releases page instead.
     #[cfg(target_os = "linux")]
@@ -1844,7 +1856,7 @@ async fn tokio_sleep(d: Duration) {
 
 fn handle_sidecar(app: &AppHandle, msg: Value) {
     match msg.get("type").and_then(Value::as_str) {
-        Some("update") => update(app, msg.get("install").and_then(Value::as_bool) == Some(true)),
+        Some("update") => update(app, msg.get("install").and_then(Value::as_bool) == Some(true), msg.get("version").and_then(Value::as_str).map(String::from)),
         Some("login_item") => login_item(app, msg.get("on").and_then(Value::as_bool)),
         Some("menu") => {
             if let Some(items) = msg.get("items").and_then(Value::as_array) {

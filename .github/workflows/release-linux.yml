@@ -63,15 +63,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev libasound2-dev libgtk-layer-shell-dev libpipewire-0.3-dev clang patchelf libfuse2t64 gstreamer1.0-plugins-base gstreamer1.0-plugins-good
 
-      # createUpdaterArtifacts is switched off: it needs the upstream project's private signing key, which a fork doesn't have.
-      - name: Build
-        env:
-          TAURI_BUNDLES: appimage,deb,rpm
-        run: ./build.sh release --target x86_64-unknown-linux-gnu --config '{"bundle":{"createUpdaterArtifacts":false}}'
-
       # A run by hand makes the next release of this version: v0.1.46-linux.1, then .2, and so on (the first run of a new
-      # upstream version starts again at .1). A pushed tag is used as it is. The newest release is marked as the latest.
-      - name: Publish the release
+      # upstream version starts again at .1). A pushed tag is used as it is. The number goes into the app too, so it can
+      # tell when a newer release is out.
+      - name: Number this build
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -82,6 +77,21 @@ jobs:
               | sed -n "s/^v${VERSION//./\\.}-linux\.\([0-9][0-9]*\)$/\1/p" | sort -n | tail -1)"
             TAG="v${VERSION}-linux.$(( ${LAST:-0} + 1 ))"
           fi
+          echo "Building $TAG"
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+          echo "ROAMIES_BUILD=${TAG#v}" >> "$GITHUB_ENV"
+
+      # createUpdaterArtifacts is switched off: it needs the upstream project's private signing key, which a fork doesn't have.
+      - name: Build
+        env:
+          TAURI_BUNDLES: appimage,deb,rpm
+        run: ./build.sh release --target x86_64-unknown-linux-gnu --config '{"bundle":{"createUpdaterArtifacts":false}}'
+
+      # Each release keeps its number in its file names, and the newest is marked as the latest.
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
           LABEL="${TAG#v}"
           echo "Releasing $TAG"
           B=src-tauri/target/x86_64-unknown-linux-gnu/release/bundle

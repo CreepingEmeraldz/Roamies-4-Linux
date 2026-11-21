@@ -37,6 +37,7 @@ import { KEY_NAME as SYNC_KEY, MIN_PASSPHRASE, checkFolder, folderReady, merge a
 import { EMOTES, EchoFilter, ReplyStream } from './reply.mjs';
 import { downloadModel, isReady, modelDir, sizeLabel, totalBytes } from './voicemodel.mjs';
 import { copyText, createTools, expand, fitImage, imageBlock, oneYesNoAtATime, winOpen } from './tools.mjs';
+import { checkFork } from './forkupdate.mjs';
 import { describeMarks } from './marks.mjs';
 import { faviconFor } from './draw.mjs';
 import { QUESTIONS, openNote, answerTurn, wantsSkip, endsChat, splitTurn, plain, stripNote, tourBeats, goalFrom, showcaseBeats } from './intro.mjs';
@@ -1951,15 +1952,24 @@ function setLogin(on) { login.asked = true; send({ type: 'login_item', on }); }
 // The app checks the signed feed and installs (Rust: update()); this side decides what to say and offers the menu item.
 // page: this copy can't replace itself (Linux, installed from a .deb or .rpm), so "install" opens the download page.
 const update = { available: null, told: null, manual: false, installing: false, checking: false, result: null, page: false, done: null };
+// This fork's Linux builds carry no update signature, so they only look at the fork's newest release and say when it is
+// newer than this build (BUILD, set when the app is built: 0.1.46-linux.3); installing opens the download page.
+const BUILD = typeof __ROAMIES_BUILD__ === 'string' ? __ROAMIES_BUILD__ : '';
 function checkUpdates(manual = false) {
   update.manual = manual;
   if (manual) { update.checking = true; update.result = null; panel(); }
+  if (LINUX) {
+    checkFork(UPDATE_REPO, BUILD || VERSION)
+      .then((r) => onUpdateStatus({ ...r, page: true }), (e) => onUpdateStatus({ state: 'error', error: String(e?.message ?? e) }))
+      .catch((e) => console.error('update check', e));
+    return;
+  }
   send({ type: 'update', install: false });
 }
 function installUpdate() {
   if (update.installing) return;
   update.installing = true; menu();
-  send({ type: 'update', install: true });
+  send({ type: 'update', install: true, ...(LINUX && update.available ? { version: update.available } : {}) });
 }
 function onUpdateStatus(m) {
   logLine('update_status', { state: String(m.state ?? ''), ...(m.version ? { version: String(m.version) } : {}), manual: !!update.manual });
