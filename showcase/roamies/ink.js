@@ -186,7 +186,7 @@
   }
   // While something is being drawn, everything drawn is repainted each frame. Once it settles, only the few things
   // that keep moving (a waiting target's pulse, a turning model, bobbing chevrons) are, at 30 frames a second.
-  let lastLive = 0;
+  let lastLive = 0, lastFull = 0;
   function render() {
     raf = 0;
     const t = now();
@@ -194,7 +194,10 @@
     if (!marks.length) { if (alloc) freeCanvas(); return; }
     if (!alloc) allocate();
     const full = t < until || !!drag || !!sizing || !lastU, live = full ? [] : marks.filter((m) => m.live?.(t));
+    // Linux (software canvas): repaint at 30 fps at most; 60 would cost more than the laptop has.
+    if (full && window.ROAMIE_LINUX && lastU && t - lastFull < 1 / 31) { raf = requestAnimationFrame(render); return; }
     if (full) {
+      lastFull = t;
       let U = null;
       for (const m of marks) U = union(U, grow(markBox(m), 28));
       U = clampR(U);
