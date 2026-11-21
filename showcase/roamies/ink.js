@@ -159,6 +159,9 @@
   // in a second pass after it: a circle or arrow never covers a label.
   function paint(C, t) {
     if (C[2] <= 0 || C[3] <= 0) return;
+    // ROAMIES_FULLPAINT=1 (Linux, to try with GPU painting): every repaint covers the whole screen, so a stale copy of
+    // the layer on screen is never left holding bits of an old frame.
+    if (window.ROAMIE_FULLPAINT) C = [0, 0, W, H];
     const order = [...marks].sort((a, b) => a.z - b.z).filter((m) => overlap(grow(markBox(m), 28), C) > 0), cut = order.findIndex((m) => m.z >= 6);
     const passes = cut < 0 ? [order] : [order.slice(0, cut), order.slice(cut)];
     passes.forEach((group, i) => {

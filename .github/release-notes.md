@@ -6,6 +6,10 @@ This build includes everything from the main Roamies v0.1.49: the E20 fix, NVIDI
 
 While the AI is drawing, the overlay now repaints at most 30 times a second on Linux instead of as fast as it can. A profile from a Framework 13 showed each frame taking 20-30 ms, too slow for 60 fps, so this halves the painting work.
 
+## Trying GPU painting
+
+With `ROAMIES_DMABUF=1` WebKit paints on the GPU and a fullscreen card is much smoother, but the overlay can flicker between two copies of itself. `ROAMIES_FULLPAINT=1` repaints the whole screen every frame to try to stop that. Both are experiments, so tell me how they go.
+
 ## Drawings and pointing land on the right words
 
 Roamies reads the words on your screenshot with tesseract, so rings and marks go where the text actually is instead of where the model guessed. Install it once: `sudo apt install tesseract-ocr`. Without it, drawing still works but is less accurate.
