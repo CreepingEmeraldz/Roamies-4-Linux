@@ -100,7 +100,8 @@ jobs:
           cp $B/deb/*.deb "out/Roamies_${LABEL}_amd64.deb"
           cp $B/rpm/*.rpm "out/Roamies-${LABEL}.x86_64.rpm"
           ls -la out
+          PREV="$(gh release list -R "$GITHUB_REPOSITORY" --limit 1 --json tagName -q '.[0].tagName' || true)"
+          { cat .github/release-notes.md; echo; echo "**Full Changelog**: https://github.com/$GITHUB_REPOSITORY/compare/${PREV:-$TAG}...$TAG"; } > notes.md
           gh release create "$TAG" -R "$GITHUB_REPOSITORY" --title "Roamies $LABEL (Linux)" --latest \
-            --notes "Install tesseract too (sudo apt install tesseract-ocr) so drawings land on the right words. Setup and shortcuts: docs/LINUX.md." \
-            --generate-notes --target "$GITHUB_SHA"
+            --notes-file notes.md --target "$GITHUB_SHA"
           gh release upload "$TAG" -R "$GITHUB_REPOSITORY" --clobber out/*

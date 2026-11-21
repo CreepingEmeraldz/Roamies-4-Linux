@@ -1,6 +1,39 @@
 {
   "updates": [
     {
+      "version": "0.1.49",
+      "date": "2026-11-21",
+      "items": [
+        { "kind": "fixed", "title": "ChatGPT works again", "text": "Every ChatGPT and OpenAI message failed with E20. Fixed. Thanks matts-2539!" },
+        { "kind": "new", "title": "Text-only subagents", "text": "Subagents can use models that can't see images, like NVIDIA's coding models." },
+        { "kind": "fixed", "title": "Smooth capsule on Linux", "text": "On Linux, the capsule flashed black stripes as it opened. Fixed. Thanks sakartvelo11!" },
+        { "kind": "fixed", "title": "I remember with NVIDIA NIM", "text": "With NVIDIA NIM, I forgot what we'd just said. Not anymore. Thanks FunisWokodneer!" }
+      ]
+    },
+    {
+      "version": "0.1.48",
+      "date": "2026-11-21",
+      "items": [
+        { "kind": "fixed", "title": "Fullscreen on GNOME", "text": "On Ubuntu Xorg, the top bar and dock stayed over fullscreen apps. Thanks sakartvelo11!" }
+      ]
+    },
+    {
+      "version": "0.1.47",
+      "date": "2026-11-21",
+      "items": [
+        { "kind": "fixed", "title": "Voice on older PCs", "text": "Voice crashed at start on PCs without AVX2. It works now. Thanks Harry and waningeplayz!" },
+        { "kind": "fixed", "title": "New look, new name", "text": "After switching looks mid chat, I could still think I was the old one. Not anymore." },
+        { "kind": "fixed", "title": "ChatGPT running out fast", "text": "ChatGPT gives me a small share of your plan at first. I now show you where to raise it." },
+        { "kind": "fixed", "title": "Time to read", "text": "Cards and replies vanished too fast. They stay long enough to read now. Thanks!" },
+        { "kind": "improved", "title": "Voice and cards in step", "text": "In a long explanation, my voice now stays on the card you're looking at." },
+        { "kind": "fixed", "title": "Gemini limits, not credit", "text": "Gemini's free limit showed as out of credit. I now say it's a limit. Thanks Codinfo!" },
+        { "kind": "fixed", "title": "I know when a drawing is gone", "text": "When a drawing left the screen, I could still talk as if it was there. Not anymore." },
+        { "kind": "improved", "title": "Fewer broken drawings", "text": "Some models got a drawing slightly wrong. I fix their small slip ups myself now." },
+        { "kind": "improved", "title": "Lighter on your plan", "text": "I send the model about a quarter less with every message, so each reply uses less." },
+        { "kind": "improved", "title": "Claude explains in depth", "text": "With Claude, \"explain in depth\" now shows one big card at a time, like other models." }
+      ]
+    },
+    {
       "version": "0.1.46",
       "date": "2026-11-20",
       "items": [

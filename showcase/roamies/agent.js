@@ -597,7 +597,8 @@
       if (bb.closing) { bb.closing += dt; return; }
       if (done) {
         if (!bb.hover && !bb.expanded && !R.voiceOut?.playing()) bb.dwell += dt;
-        const linger = clamp(1.1 + bb.text.length * 0.015, 1.3, bb.overflow ? 8 : 4.5);
+        // Long enough to read, about 200 words a minute (#143: capped at 4.5 s, long replies closed mid-read).
+        const linger = clamp(1.1 + bb.text.split(/\s+/).filter(Boolean).length / 3.3, 1.3, 30);
         if (bb.kind === 'speech' && bb.dwell > linger) close(bb);
         if (bb.kind === 'thought' && bb.dwell > 0.4) close(bb);
       }

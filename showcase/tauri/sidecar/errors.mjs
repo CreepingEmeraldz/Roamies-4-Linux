@@ -23,7 +23,7 @@ const AREAS = {
     unknown: () => "Sign-in didn't work (E10). Try again.",
     known: [
       ['E11', /cancell?ed|AbortError/i, () => 'Sign-in cancelled.'],
-      ['E12', (e, s) => e?.name === 'ChatGPTPlanNotEnabledError' || /plan use isn't enabled|access_denied/i.test(s), () => "Your ChatGPT plan can't be used here. Use an API key."],
+      ['E12', (e, s) => e?.name === 'ChatGPTPlanNotEnabledError' || /plan use isn't enabled|access_denied/i.test(s), () => 'Allow Use your ChatGPT plan, or use an API key.'],
       ['E13', /invalid_grant/i, (c) => `${c.who} sign-in didn't finish. Try again.`, true],
       ['E14', /invalid_client|different app registration|didn't finish registering/i, (c) => `${c.who} setup didn't finish. Try again.`, true],
       ['E15', /didn't come back from the browser|closed without a callback|No callback URL|Could not complete the sign-in|local sign-in listener/i, (c) => `${c.who} didn't come back from the browser. Try again.`],
@@ -42,7 +42,16 @@ const AREAS = {
       ['E22', /not logged in|NotLoggedIn|\b401\b|unauthori[sz]ed|invalid_grant|token refresh failed|authentication_error|(?:invalid|incorrect).{0,6}api.?key/i, (c) => `My ${c.who} login stopped working. Sign in again.`, false, 'model'],
       // A rate limit that quotes its numbers (Groq, OpenAI: "... tokens per minute (TPM): Limit 7000, Requested 14362"). Before the
       // credit line: these messages often end with an upgrade link that says "billing".
-      ['E2B', /rate_limit_exceeded|(?:tokens|requests) per (?:minute|day)|free-models-per-day/i, (c) => c.rate ?? `${c.who} says: too many requests. Wait a minute.`, false, 'model'],
+      ['E7F', /rate_limit_exceeded|(?:tokens|requests) per (?:minute|day)|free-models-per-day/i, (c) => c.rate ?? `${c.who} says: too many requests. Wait a minute.`, false, 'model'],
+      // Signed in with ChatGPT: each app gets its own weekly share of the plan (Settings > Usage > App limits), and it can
+      // run out after a prompt or two while the plan itself has plenty left. "unavailable" shares the same message.
+      ['E2B', /subscription_sharing_usage_unavailable/i, () => "ChatGPT couldn't check your plan usage. Try again soon."],
+      ['E2C', /subscription_sharing_usage_limit_exceeded|ChatGPT usage limit reached/i, () => "ChatGPT's limit for me is used up. Raise it in ChatGPT.", false, 'chatgpt'],
+      ['E2D', /subscription_sharing_user_not_eligible|ChatGPT plan use isn't available/i, () => "Your ChatGPT plan can't be used here. Use an API key.", false, 'model'],
+      // Gemini's per-minute and daily limits say "check your plan and billing details": a limit, not an empty account (#144).
+      // OpenAI's empty account says the same words with insufficient_quota, so that one stays E23.
+      ['E2E', /(?:free_tier|FreeTier)\S*(?:per_?day|PerDay)|(?:per_?day|PerDay)\S*(?:free_tier|FreeTier)/i, (c) => `${c.who}'s free daily limit is used up. Pick another model.`, false, 'model'],
+      ['E2F', /^(?![^]*insufficient_quota)[^]*check your plan and billing details/i, (c) => `${c.who}'s per-minute limit is hit. Try again in a minute.`],
       ['E23', /insufficient_quota|credit balance|billing|payment required|\b402\b/i, () => 'This account is out of credit. Top up or switch model.', false, 'model'],
       ['E24', /usage.?limit|quota|rate.?limit|\b429\b|too many requests/i, () => "I've hit this model's usage limit. Pick another model.", false, 'model'],
       ['E25', /context.{0,20}(?:length|window)|prompt is too long|too many tokens|maximum context|exceeds the available context/i, () => 'This chat got too long. Start a new one.'],

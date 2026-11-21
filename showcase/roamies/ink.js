@@ -1963,10 +1963,22 @@
   // Spoken lines: the marks are released across the line from when its audio starts (voice-out.js learns how many
   // characters a second the voice says); text only, about 2.6 words a second.
   const cps = () => R.voiceOut?.cps?.() ?? 15;
-  async function voiceStart() {
+  // A slow connection can take several seconds to start the voice (#143): the drawing waits for it rather than running
+  // ahead. P: how much of the reply had played when the drawing's lines began.
+  async function voiceStart(clock) {
     const t0 = now();
-    while (now() - t0 < 2.5) { if (R.voiceOut?.playing()) return now(); await sleep(50); }
+    while (now() - t0 < 8) { if (R.voiceOut?.playing()) { clock.P = R.voiceOut.played?.() ?? null; return now(); } await sleep(50); }
     return now();
+  }
+  // Until the voice has said `chars` of the drawing's lines, by the audio that has actually played, so a voice that
+  // stalls (chunks arriving late) holds the drawing too. With no voice going, the clock's estimate `t` instead.
+  async function untilSaid(chars, clock, t, gen) {
+    const V = R.voiceOut;
+    while (gen === G.gen) {
+      if (clock.P == null || !V?.speaking?.()) return until_(t, gen);
+      if ((V.played() - clock.P) * cps() >= chars) return;
+      await sleep(50);
+    }
   }
   const until_ = async (t, gen) => { while (now() < t && gen === G.gen) await sleep(Math.min(100, (t - now()) * 1000)); };
 
@@ -1985,15 +1997,18 @@
     return f(m, ctx);
   }
   async function runBeat(b, e, clock, gen) {
-    const voiced = b.voiced && clock.T != null, chars = String(b.caption ?? '').length;
-    const t0 = voiced ? Math.max(now(), clock.T + clock.before / cps()) : now();
+    const voiced = b.voiced && clock.T != null, chars = String(b.caption ?? '').length, said = clock.before;
+    const est = voiced ? Math.max(now(), clock.T + said / cps()) : now();
     const dur = voiced ? Math.max(1.2, chars / cps()) : Math.max(1.6, String(b.caption ?? '').split(/\s+/).filter(Boolean).length / 2.6);
     clock.before += chars + 1;
-    // Behind the voice (the previous beat's marks took longer than its line): draw this one faster to catch up.
-    const late = now() - t0;
-    if (penApi()) penApi().speed = late > 0.4 ? clamp(1 + late / 2, 1, 2.5) : 1;
-    await until_(t0, gen);
+    if (voiced) await untilSaid(said, clock, est, gen); else await until_(est, gen);
     if (gen !== G.gen) return;
+    // Behind the voice (the previous beat's marks took longer than its line): this line started `late` seconds ago, so
+    // its marks are timed from then and drawn faster to catch up.
+    const V = R.voiceOut, heard = voiced && clock.P != null && V?.speaking?.() ? (V.played() - clock.P) * cps() : null;
+    const late = Math.min(dur, heard != null ? Math.max(0, heard - said) / cps() : Math.max(0, now() - est));
+    if (penApi()) penApi().speed = late > 0.4 ? clamp(1 + late / 2, 1, 2.5) : 1;
+    const t0 = now() - late;
     caption.show(b.caption);
     upcoming = b.marks.filter((m) => m.at?.rect && SCREEN_MARKS[m.kind]).map((m) => grow(rectOf(m), 4));
     const ctx = { num: 0 }, made = [];
@@ -2009,6 +2024,14 @@
     }
     upcoming = [];
     await until_(t0 + dur, gen);
+    // A deep card closes when the next opens (#143): written replies keep it up long enough to read, and longer while
+    // the pointer rests on it (up to a minute). Spoken ones follow the voice, which is saying the next line.
+    if (b.read && !voiced) {
+      await until_(t0 + Math.max(dur, b.read), gen);
+      const mine = () => marks.filter((q) => q.alive && q.deep && b.marks.some((x) => x.part && x.part === q.part));
+      const held = now();
+      while (gen === G.gen && now() - held < 60 && G.ptr && mine().some((q) => inside(markBox(q), G.ptr[0], G.ptr[1]))) await sleep(200);
+    }
     if (gen !== G.gen || !b.wait) return;
     const result = await waitFor(b, made, gen);
     G.clock = null;
@@ -2052,8 +2075,8 @@
     // when the next line is only spoken once its beat is sent.
     const voiced = (e.beats ?? []).some((b) => b.voiced);
     let clock = G.clock?.id === e.id ? G.clock : null;
-    if (!clock) clock = G.clock = { id: e.id, T: voiced ? await voiceStart() : null, before: 0 };
-    else if (clock.T == null && voiced) clock.T = await voiceStart();
+    if (!clock) { clock = G.clock = { id: e.id, T: null, P: null, before: 0 }; if (voiced) clock.T = await voiceStart(clock); }
+    else if (clock.T == null && voiced) clock.T = await voiceStart(clock);
     for (const b of e.beats ?? []) { if (gen !== G.gen) return; await runBeat(b, e, clock, gen); }
   }
   async function pump() {

@@ -80,14 +80,50 @@ const Mark = z.object({
 const BEAT_KEYS = new Set(['say', 'marks', 'wait']), CALL_KEYS = new Set(['target', 'beats', 'edit', 'deep', 'keep']);
 const isObj = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
 const loose = (o, keep) => Object.fromEntries(Object.entries(o).filter(([k]) => !keep.has(k)));
+// The model sees a card's list items only as objects (drawModelSchema), so the shapes it guesses are set right here:
+// {x, y, z} (or {x, y}) for [x, y, z], {min, max} for a range, a row keyed by column, {text} for a plain list item.
+const asVec = (v) => (!isObj(v) ? v : 'x' in v && 'y' in v ? ['x', 'y', 'z'].filter((k) => k in v).map((k) => v[k])
+  : 'min' in v && 'max' in v ? [v.min, v.max] : typeof v.from === 'number' && typeof v.to === 'number' ? [v.from, v.to] : v);
+const asVecs = (v) => (Array.isArray(v) ? v.map(asVec) : v);
+const asText = (v) => (isObj(v) && typeof v.text === 'string' ? v.text : v);
+const each = (v, f) => (Array.isArray(v) ? v.map((x) => (isObj(x) ? f(x) : x)) : v);
+// A 3D place written flat ({x, y} or [x, y]) gets z = 0; a size as {w, h, d} is [w, h, d] (two numbers stay wrong).
+const vec3 = (v, k) => {
+  const a = isObj(v) && 'w' in v && 'h' in v ? [v.w, v.h, ...('d' in v ? [v.d] : [])] : asVec(v);
+  return k !== 'size' && Array.isArray(a) && a.length === 2 && a.every((n) => typeof n === 'number') ? [...a, 0] : a;
+};
+const vecs = (o, keys) => Object.fromEntries(Object.entries(o).map(([k, v]) => [k, keys.includes(k) ? vec3(v, k) : v]));
+// Lists and places sent as JSON text ("[{…}]"), as DeepSeek does, are read as what they say.
+const SHAPED = new Set(['at', 'to', 'tie', 'points', 'items', 'branches', 'sources', 'x_range', 'y_range', 'plots', 'dots', 'keys', 'events', 'parts',
+  'nodes', 'links', 'columns', 'rows', 'bars', 'labels', 'shade', 'pins', 'routes', 'steps', 'vertices', 'lines', 'angles', 'circles', 'questions', 'action', 'marks', 'beats', 'edit']);
+const unjson = (v) => { if (typeof v !== 'string' || !/^\s*[[{]/.test(v)) return v; try { return JSON.parse(v); } catch { return v; } };
+const parsed = (o) => Object.fromEntries(Object.entries(o).map(([k, v]) => [k, SHAPED.has(k) ? unjson(v) : v]));
+function fixShapes(m) {
+  const out = parsed(m);
+  for (const k of ['x_range', 'y_range']) if (k in out) out[k] = asVec(out[k]);
+  if ('points' in out) out.points = asVecs(out.points);
+  if ('plots' in out) out.plots = each(out.plots, (p) => ({ ...p, points: asVecs(p.points) }));
+  if ('parts' in out) out.parts = each(out.parts, (p) => ({ ...vecs(p, ['at', 'size', 'rot']), ...(isObj(p.motion) ? { motion: vecs(p.motion, ['around', 'to']) } : {}) }));
+  if (Array.isArray(out.items)) out.items = out.items.map(asText);
+  if ('branches' in out) out.branches = each(out.branches, (b) => (Array.isArray(b.items) ? { ...b, items: b.items.map(asText) } : b));
+  if (Array.isArray(out.rows)) {
+    const cols = Array.isArray(out.columns) ? out.columns : [];
+    out.rows = out.rows.map((r) => (!isObj(r) ? r : cols.length && cols.every((c) => c in r) ? cols.map((c) => r[c]) : Object.values(r)));
+  }
+  return out;
+}
 function tidyMark(m) {
   if (!isObj(m)) return m;
+  // An empty field (text: "") is one left out, not a mistake to send back.
+  if (Object.values(m).includes('')) m = Object.fromEntries(Object.entries(m).filter(([, v]) => v !== ''));
+  m = fixShapes(m);
   if (m.kind === 'button' && !m.text && typeof m.label === 'string') return { ...m, text: m.label };
   if (m.kind === 'card' && !m.text && !m.heading && typeof m.title === 'string') return { ...m, heading: m.title };
   return m;
 }
 function tidyBeat(b) {
   if (!isObj(b)) return b;
+  b = parsed(b);
   const extra = loose(b, BEAT_KEYS);
   let marks = b.marks ?? [];
   if (Object.keys(extra).length && Array.isArray(marks)) {
@@ -97,7 +133,19 @@ function tidyBeat(b) {
   // No line to say (#117): it draws without a caption instead of the whole drawing failing.
   return { ...b, say: typeof b.say === 'string' ? b.say : '', marks: Array.isArray(marks) ? marks.map(tidyMark) : marks };
 }
+// Reading a card (#143): a deep explanation closes each card as the next opens, so a card stays at least as long as its
+// words take to read, about 200 a minute, between 3 and 30 seconds. Names, places and settings aren't read.
+const NOT_READ = new Set(['kind', 'tone', 'card_size', 'at', 'part', 'id', 'url', 'link', 'photo', 'image', 'icon', 'query', 'smiles', 'points', 'tie', 'action', 'color', 'side']);
+const wordsIn = (v, key = '') => (NOT_READ.has(key) ? 0 : typeof v === 'string' ? v.split(/\s+/).filter(Boolean).length
+  : Array.isArray(v) ? v.reduce((n, x) => n + wordsIn(x), 0) : v && typeof v === 'object' ? Object.entries(v).reduce((n, [k, x]) => n + wordsIn(x, k), 0) : 0);
+export function readSecs(marks) {
+  const words = (marks ?? []).filter((m) => CARDS.includes(m?.kind)).reduce((n, m) => n + wordsIn(m), 0);
+  return words ? Math.min(30, Math.max(3, Math.round(words / 3.3))) : 0;
+}
 export function tidyDraw(a) {
+  if (isObj(a)) a = parsed(a);
+  // A lone mark sent as the whole call, with no beats (DeepSeek).
+  if (isObj(a) && a.beats === undefined && !a.edit && typeof a.kind === 'string') a = { ...a, beats: [{ marks: [] }] };
   if (!isObj(a) || !Array.isArray(a.beats)) return a;
   const extra = loose(a, CALL_KEYS);
   let beats = Object.keys(extra).length && a.beats.length === 1 && isObj(a.beats[0]) ? [{ ...extra, ...a.beats[0] }] : a.beats;
@@ -114,6 +162,17 @@ export const DrawArgs = z.preprocess(tidyDraw, z.object({
   deep: z.boolean().optional(),
   keep: z.boolean().optional(),
 }));
+
+/** What the model is shown of draw, from its lean schema: every field and type, but a card's list items (bars, nodes,
+ *  parts …) only as objects with their counts; their fields are in draw's description. */
+export function drawModelSchema(lean) {
+  const marks = lean.properties.beats.items.properties.marks.items.properties;
+  // Places (at, to, tie) keep their fields: shown only as objects, Claude tied cards to guessed pixels.
+  // additionalProperties says the items take any fields: OpenAI's strict mode can't, so draw goes to it non-strict
+  // (a bare object became one with no fields allowed, and OpenAI refused every request, #156).
+  for (const [k, p] of Object.entries(marks)) if (p.type === 'array' && p.items?.type === 'object') marks[k] = { type: 'array', items: { type: 'object', additionalProperties: true }, ...(p.minItems ? { minItems: p.minItems } : {}), ...(p.maxItems ? { maxItems: p.maxItems } : {}) };
+  return lean;
+}
 
 const hasAt = (t) => !!t && (t.text != null || t.id != null || (t.x != null && t.y != null));
 /** Everything wrong with a draw call that the schema can't say, as lines for the model; [] when it's fine. */

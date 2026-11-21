@@ -332,14 +332,16 @@ export function createAgents({ fork, ui, config, root, userName = 'The user', ru
     }
     a.returns = returnsOf(a);
     Object.assign(a, { state: 'working', told: true, started: now(), workMs: 0, workFrom: now(), turns: 0, tokens: { in: 0, out: 0 }, ask: null, model: { provider: md.provider, model: md.model, route: md.route } });
-    const images = [], given = [];
+    // A model that can't see images (a text-only subagent) gets the pictures as files only.
+    const images = [], given = [], sees = md.images !== false;
     for (const item of (Array.isArray(inputs) ? inputs : []).slice(0, 10)) {
       if (item === 'snap') {
         const img = config.image?.();
         if (!img) continue;
         const name = `snap-${Date.now()}.png`;
         await fs.promises.writeFile(path.join(a.dir, 'inputs', name), Buffer.from(img.data, 'base64'));
-        images.push(img); given.push(`inputs/${name} (the picture ${userName} sent; you can see it above)`);
+        if (sees) images.push(img);
+        given.push(`inputs/${name} (the picture ${userName} sent; ${sees ? 'you can see it above' : "your model can't see pictures"})`);
         continue;
       }
       const v = safety.checkRead(String(item).replace(/^~(?=$|\/|\\)/, home), home);
@@ -350,7 +352,7 @@ export function createAgents({ fork, ui, config, root, userName = 'The user', ru
       const dest = path.join(a.dir, 'inputs', path.basename(v.path));
       await fs.promises.copyFile(v.path, dest);
       const mt = IMAGE[path.extname(dest).toLowerCase()];
-      if (mt && st.size <= 4 << 20 && images.length < 3) images.push({ type: 'image', mediaType: mt, data: (await fs.promises.readFile(dest)).toString('base64') });
+      if (sees && mt && st.size <= 4 << 20 && images.length < 3) images.push({ type: 'image', mediaType: mt, data: (await fs.promises.readFile(dest)).toString('base64') });
       given.push(`inputs/${path.basename(dest)}`);
     }
     let before = '';
@@ -528,7 +530,7 @@ export function createAgents({ fork, ui, config, root, userName = 'The user', ru
   const tools = [
     {
       name: 'send_agent',
-      description: `Start a background agent: it works on its own in its own folder (~/Roamies/Agents) while you keep talking, and shows as a row in the top-right corner of the screen. Use it when ${userName} asks for an agent or for work in the background, or for long hands-off work (a website, a document or slides, deep research, tidying a folder) after offering it and hearing yes. Never for a quick answer or anything on the screen. type: maker (makes files: pages, documents, code, pictures), researcher (finds things out on the web and writes notes), organizer (moves and renames files, with one yes for the batch). title: 2 to 5 words for its row. brief: everything it needs, complete and specific, because it sees none of this conversation: what to make or find, for whom, the style, every name and detail ${userName} gave (quote their own words where they matter, never reword a name or a number), and what done looks like. Their exact words are attached to the brief for you, so the agent always has them. subagent: a specialist from the Subagents list in the live state (its type and model are then set for you, so type and model can be left out); give it a prompt for its own part of the job. model: only when they named a model for this agent ("use Gemini for it", "have Opus do it"): its name as they said it; otherwise leave it out. inputs: paths of files it should have, or "snap" for the picture sent with this request. deliver_to: a folder they named for the result ("on my Desktop" → ~/Desktop). continue: the id of a finished agent, to carry on in its folder. returns: files when they asked for something made (a page, a document, slides, a picture, "save it as…"); answer when they want something found out or done (a question, a check, tidying, a lookup), and then it reports back to you, with no file. Left out: files for a maker, answer otherwise. Once it starts, say nothing more: its launch on screen is your reply.`,
+      description: `Start a background agent: it works alone in its own folder (~/Roamies/Agents) while you keep talking, shown as a row in the top-right corner. Only when ${userName} asks for an agent or for work in the background, or for long hands-off work (a website, a document or slides, deep research, tidying a folder) after offering it and hearing yes; never for a quick answer or anything on the screen. type: maker (makes files), researcher (finds things out on the web, writes notes), organizer (moves and renames files, one yes for the batch). title: 2 to 5 words. brief: complete, since it sees none of this conversation: what to make or find, for whom, the style, every name and detail as ${userName} gave it (never reword a name or a number), and what done looks like; their exact words are attached for it. subagent: a specialist from the live state's Subagents list (its type and model are then set: leave them out), with a prompt for its own part; one per separate part of a request. model: only when they named one ("use Gemini for it"). inputs: file paths, or "snap" for this request's picture. deliver_to: a folder they named ("on my Desktop" → ~/Desktop). continue: a finished agent's id, to carry on in its folder. returns: files when they asked for something made (a page, document, slides, picture, "save it as…"); answer when they want something found out or done (it reports back to you, with no file); left out: files for a maker, answer otherwise. Once it starts, say nothing more: its launch is your reply.`,
       parameters: z.object({
         type: z.enum(AGENT_TYPES).optional(), subagent: z.string().max(40).optional(), title: z.string().min(1).max(60), brief: z.string().min(1).max(8000),
         inputs: z.array(z.string().max(500)).max(10).optional(), deliver_to: z.string().max(500).optional(), continue: z.string().max(12).optional(),
