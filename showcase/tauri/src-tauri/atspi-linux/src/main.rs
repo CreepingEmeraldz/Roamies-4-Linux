@@ -269,6 +269,15 @@ fn main() {
             Ok(()) => out(json!({ "ok": true })),
             Err(e) => fail(&e),
         },
+        // The window with the cursor right now, cheap enough to ask before every question: {"ok":true,"app","title"}.
+        Some("front") => {
+            let bus = Bus::open().unwrap_or_else(|e| fail(&e));
+            let wins = windows(&bus);
+            match wins.iter().find(|w| w.active) {
+                Some(w) => out(json!({ "ok": true, "app": w.app, "title": w.title })),
+                None => out(json!({ "ok": true })),
+            }
+        }
         Some("windows") => {
             let _ = enable();
             let bus = Bus::open().unwrap_or_else(|e| fail(&e));
@@ -327,6 +336,6 @@ fn main() {
                 Err(e) => fail(&e),
             }
         }
-        _ => fail("usage: roamies-atspi windows | ui <front|app:NAME|window:ID> [controls] | act <json> | enable"),
+        _ => fail("usage: roamies-atspi windows | front | ui <front|app:NAME|window:ID> [controls] | act <json> | enable"),
     }
 }

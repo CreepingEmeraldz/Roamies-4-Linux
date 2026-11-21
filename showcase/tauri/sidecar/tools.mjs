@@ -1233,14 +1233,19 @@ A drawing stays until it's cleared, the window changes or the next one replaces 
   ];
 
   // What's in front, for the live state. Quick and never fails: '' if the helper is missing, slow or denied.
+  // Linux: the window with the cursor, from the accessibility helper ({ app, title }), so "I'm on Wikipedia" needn't be said.
+  async function atspiFront() {
+    const r = await run(ATSPI, ['front'], { timeout: 900 }).catch(() => null);
+    try { const f = JSON.parse(r?.stdout.trim().split('\n').pop() || '{}'); return f.app ? f : null; } catch { return null; }
+  }
   async function whereNow() {
-    if (!HANDS) return '';
+    if (!HANDS) return ATSPI ? frontLine(await atspiFront(), userName) : '';
     const r = await runHands(['front'], { timeout: 900 });
     try { return frontLine(JSON.parse(r.stdout.trim().split('\n').pop() || '{}'), userName); } catch { return ''; }
   }
   // The window in front as data ({ app, title, url }), for focus mode; null if the helper is missing or slow.
   async function frontNow() {
-    if (!HANDS) return null;
+    if (!HANDS) return ATSPI ? atspiFront() : null;
     const r = await runHands(['front'], { timeout: 900 }).catch(() => null);
     try { const f = JSON.parse(r?.stdout.trim().split('\n').pop() || '{}'); return f.app ? f : null; } catch { return null; }
   }
