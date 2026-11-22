@@ -19,7 +19,7 @@ const MISSING = /\b404\b|model[_ ]not[_ ]found|does not exist|no such model|unkn
 const DOWN = /ECONNREFUSED|ENOTFOUND|ETIMEDOUT|ECONNRESET|EAI_AGAIN|fetch failed|network error|socket hang up|\b50[024]\b|bad gateway|gateway time-?out|internal server error/i;
 
 // Each error in the chain as text, with the fields that carry the news (status, code…).
-function textOf(err) {
+export function textOf(err) {
   if (err == null) return '';
   if (typeof err !== 'object') return String(err);
   const parts = [];
@@ -44,7 +44,7 @@ export function resetAt(err, text, now = Date.now()) {
   }
   let m = /try again in (\d+(?:\.\d+)?)\s*(ms|milliseconds?|s|secs?|seconds?|m|mins?|minutes?|h|hrs?|hours?)\b/i.exec(text);
   if (m) return now + Number(m[1]) * UNIT(m[2]);
-  m = /(?:please )?retry in (\d+(?:\.\d+)?)\s*(ms|s|m|h)\b/i.exec(text); // Gemini: "Please retry in 37.5s."
+  m = /(?:please )?retry in (\d+(?:\.\d+)?)\s*(ms|milliseconds?|s|secs?|seconds?|m|mins?|minutes?|h|hrs?|hours?)\b/i.exec(text); // Gemini: "Please retry in 37.5s."
   if (m) return now + Number(m[1]) * UNIT(m[2]);
   m = /retry[- ]after[:=\s]+(\d+)/i.exec(text);
   if (m) return now + Number(m[1]) * 1000;
@@ -76,6 +76,21 @@ export function limitFrom(err, now = Date.now()) {
   if (!kind) return null;
   const at = resetAt(err, text, now) ?? now + COOLDOWN[kind];
   return { kind, until: Math.min(now + 24 * HOUR, Math.max(now + 30_000, at)) };
+}
+
+/**
+ * A per-minute rate limit that clears on its own soon (Gemini's free tier, Groq…): how long to wait, in ms, or null for
+ * anything else (a daily or monthly quota, an empty account, an error that isn't a limit). The platform's own "retry in
+ * 37 s" is used when it gives one (plus a little), else a minute; over three minutes isn't worth waiting for.
+ */
+export function rateWait(err, now = Date.now()) {
+  const text = textOf(err);
+  if (!text || !/rate.?limit|too many requests|\b429\b|resource.?exhausted|quota|tokens? per minute|requests? per minute/i.test(text)) return null;
+  if (/per ?day|daily|per ?month|monthly|weekly|insufficient[_ ]quota|credit balance|out of credits?|billing details.*(?:day|month)/i.test(text)) return null;
+  const at = resetAt(err, text, now);
+  if (at == null) return /per ?minute|rate.?limit|too many requests|\b429\b/i.test(text) ? MIN : null;
+  const ms = at - now;
+  return ms > 3 * MIN ? null : Math.max(10_000, ms) + 2000;
 }
 
 /** Why, in a few words, for telling the user (and the model taking over). */

@@ -49,7 +49,7 @@ import { LITE_BUDGET, LITE_TOOLS, LITE_TURNS, liteSystem } from './lite.mjs';
 import { handoffNote } from './quote.mjs';
 import { DELEGATE_MODES, SUBAGENTS, activeCrew, crewText, delegateNote, findSubagent } from './subagents.mjs';
 import { JOB_KINDS, findModelByName, findModelMention, hybridOn, isChitchat, jobKinds, kindOfTool, parseSpec, pickHeavy } from './route.mjs';
-import { becauseOf, createLimits, firstFree, isQuota, limitFrom, untilWords } from './limits.mjs';
+import { becauseOf, createLimits, firstFree, isQuota, limitFrom, rateWait, untilWords } from './limits.mjs';
 import { SLOTS, isSetting, resolveEffort } from './effort.mjs';
 import { pickNotch } from './notch.mjs';
 import { DEFAULT_VOICE, FISH_CHOICES } from './fish.mjs';
@@ -537,6 +537,10 @@ const limits = createLimits();
 let turnNamed = null; // the model they named this turn: a background agent started this turn follows it
 let retryInfo = null; // a request being retried on the next model after a limit: { sent, from, untilText, count }
 let retryNext = null;
+// A per-minute rate limit with nobody to hand the request to: wait it out and try again, with a Cancel button meanwhile.
+// rateRetry: set by the failing turn; rateWaiting: the wait in progress (new requests end it); rateRetryFor: tries so far.
+let rateRetry = null, rateWaiting = null, rateRetryFor = null;
+const RATE_TRIES = 3;
 // The subagents that can be handed work now: the models picked for them, else hybrid's for their kind of job.
 const crewNow = () => (config.subagents ? activeCrew(config.crew, crewSpec, hybridActive() ? config.heavy : null) : []);
 const hybridActive = () => !!config.hybrid && hybridOn(config.heavy);
@@ -1025,6 +1029,7 @@ let credsBaseUrl;
 // One run at a time: a new request waits for (or interrupts) the current one. Folding waits until none is left.
 let queued = 0;
 function enqueue(text, { interrupt = false, image = null, note = '', byVoice = false, listenAfter = false, news = null } = {}) {
+  rateWaiting?.abort('new'); // a new request ends a rate-limit wait
   if (interrupt && busy) interruptQuietly('new request');
   queued++;
   running = running.then(() => prompt(text, image, note, byVoice, news, listenAfter)).catch((e) => console.error('prompt', e))
@@ -1625,6 +1630,7 @@ async function prompt(text, image = null, note = '', byVoice = false, news = nul
     ui({ kind: 'agent', e: stalled ? { type: 'error', message: stallMessage(), speech: voice?.id ?? null } : { type: 'done', speech: voice?.id ?? null, ...(listen ? { listen } : {}), ...(rate ? { rate } : {}) } });
     logUsage({ ...use, ms: Date.now() - use.t });
     learnAfter = !config.lite && shouldLearn({ on: config.learnSkills !== false, okTools: learn.ok, errors: learn.bad, aborted: stalled || controller.signal.aborted, system: !turnWords, saved: learn.saved });
+    rateRetryFor = null;
     logLine('request_done', { turn, ms: Date.now() - use.t, calls: use.calls, tools: use.tools, in: use.in, cacheRead: use.cacheRead, cacheWrite: use.cacheWrite, out: use.out });
   } catch (err) {
     lastFailed = true;
@@ -1643,7 +1649,12 @@ async function prompt(text, image = null, note = '', byVoice = false, news = nul
         retryNext = { text, image, note, byVoice, listenAfter, news, info: { text, from: modelName(config.model), untilText: untilWords(lim.until), kind: lim.kind, count: retryCount + 1, fix } };
       }
     }
-    if (retryNext) ui({ kind: 'agent', e: { type: 'done' } });
+    // No backup to take over: a limit that clears within minutes is waited out, a few times at most.
+    if (!retryNext && !controller.signal.aborted && !stalled && config.provider !== 'local') {
+      const ms = rateWait(err), tries = rateRetryFor?.text === text ? rateRetryFor.tries : 0;
+      if (ms && tries < RATE_TRIES) rateRetry = { text, image, note, byVoice, listenAfter, news, ms, tries, who: PROVIDER_LABELS[config.provider] ?? 'The AI' };
+    }
+    if (retryNext || rateRetry) ui({ kind: 'agent', e: { type: 'done' } });
     else if (controller.signal.aborted && quiet) ui({ kind: 'agent', e: { type: 'done' } });
     else {
       const msg = stalled ? stallMessage() : controller.signal.aborted ? 'Okay, stopping.' : aloud(problem('reply', err, { who: PROVIDER_LABELS[config.provider] }));
@@ -1678,6 +1689,27 @@ async function prompt(text, image = null, note = '', byVoice = false, news = nul
     const r = retryNext; retryNext = null; retryInfo = r.info;
     enqueue(r.text, { image: r.image, note: r.note, byVoice: r.byVoice, listenAfter: r.listenAfter, news: r.news });
   }
+  if (rateRetry) { const r = rateRetry; rateRetry = null; waitAndRetry(r).catch((e) => console.error('rate wait', e)); }
+}
+// Says it's rate limited and when it will try again, with a Cancel button; when the time is up it asks again, saying the
+// last try stopped partway. Any new request, Cancel or Esc ends the wait.
+async function waitAndRetry(r) {
+  rateWaiting?.abort('new');
+  const ctrl = new AbortController();
+  rateWaiting = ctrl;
+  const secs = Math.round(r.ms / 1000);
+  const when = secs >= 100 ? `${Math.round(secs / 60)} minutes` : secs >= 50 ? 'a minute' : `${secs} seconds`;
+  const timer = setTimeout(() => ctrl.abort('time'), r.ms);
+  logLine('rate_wait', { provider: config.provider, ms: r.ms, tries: r.tries });
+  await ask({ prompt: `${r.who} is rate limiting me. I'll try again in ${when}.`, choices: ['Cancel'] }, ctrl.signal);
+  clearTimeout(timer);
+  const timedOut = ctrl.signal.aborted && ctrl.signal.reason === 'time';
+  if (rateWaiting === ctrl) rateWaiting = null;
+  if (!timedOut) { rateRetryFor = null; if (ctrl.signal.reason !== 'new') say("Okay, I won't retry that.", 'happy'); return; }
+  if (busy || queued) return;
+  rateRetryFor = { text: r.text, tries: r.tries + 1 };
+  const note = `${r.note ? `${r.note}\n` : ''}A rate limit stopped your last attempt at this request partway through, and the limit has passed. Carry on from where you stopped, without repeating steps that already worked.`;
+  enqueue(r.text, { image: r.image, note, byVoice: r.byVoice, listenAfter: r.listenAfter, news: r.news });
 }
 const STALL_MS = 120_000;
 const stallMessage = () => `${PROVIDER_LABELS[config.provider] ?? 'The AI'} stopped answering for two minutes, so I gave up on that one. Ask me again?`;
