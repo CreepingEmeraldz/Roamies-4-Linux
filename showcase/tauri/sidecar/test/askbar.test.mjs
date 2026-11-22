@@ -21,6 +21,12 @@ assert.deepEqual(place([1420, 805]), [1420 - 8 - 320, 805 - 8 - 38], 'the bottom
 // The last spot it still fits on the right, and the first where it doesn't.
 assert.deepEqual(place([1432 - 320 - 18, 300]), [1112, 308]);
 assert.deepEqual(place([1432 - 320 - 17, 300]), [1432 - 320 - 17 - 8 - 320, 308]);
+// Roamie keeps the cursor's right side: the field goes to the left of the cursor instead, and the other way round.
+const sided = (cursor, side) => Array.from(window.Roamie.askBarPlace(cursor, [320, 38], B, side));
+assert.deepEqual(sided([700, 300], 1), [700 - 8 - 320, 308], 'Roamie on the right: field on the left');
+assert.deepEqual(sided([700, 300], -1), [718, 308], 'Roamie on the left: field on the right');
+assert.deepEqual(sided([700, 300], 0), [718, 308], 'unknown side: as before');
+assert.deepEqual(sided([200, 300], 1), [218, 308], 'no room on the left: it stays on the right');
 // Five lines tall (110 px): it flips up sooner.
 assert.deepEqual(place([400, 700], [320, 110]), [418, 700 - 8 - 110]);
 // Always inside the safe area and never under the cursor, wherever the cursor is (even over the menu bar or Dock).

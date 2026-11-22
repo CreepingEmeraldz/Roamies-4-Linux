@@ -9,11 +9,13 @@
   const R = window.Roamie;
   // Clear of the arrow: right of it and just below its tip, or left of it and above near the screen's edges.
   const AHEAD = 18, BELOW = 8, BEHIND = 8;
-  // Where its top-left goes for a cursor [x, y], its size [w, h] and the room it may use { l, t, r, b }.
-  R.askBarPlace = (cursor, size, bounds) => {
+  // Where its top-left goes for a cursor [x, y], its size [w, h] and the room it may use { l, t, r, b }. side: which side
+  // of the cursor Roamie keeps (1 right, -1 left, 0 unknown): the field takes the other one, so they don't sit on each other.
+  R.askBarPlace = (cursor, size, bounds, side = 0) => {
     const [cx, cy] = cursor, [w, h] = size;
     let x = cx + AHEAD, y = cy + BELOW;
-    if (x + w > bounds.r) x = cx - BEHIND - w;
+    if (side > 0 && cx - BEHIND - w >= bounds.l) x = cx - BEHIND - w;
+    else if (x + w > bounds.r) x = cx - BEHIND - w;
     if (y + h > bounds.b) y = cy - BELOW - h;
     return [Math.round(Math.max(bounds.l, Math.min(x, bounds.r - w))), Math.round(Math.max(bounds.t, Math.min(y, bounds.b - h)))];
   };
@@ -59,7 +61,7 @@
   const over = (x, y) => x >= at[0] && x <= at[0] + size[0] && y >= at[1] && y <= at[1] + size[1];
   // It holds still while the cursor is on it (so it can be clicked); else it's beside the cursor.
   const held = () => !cursor || over(cursor[0], cursor[1]);
-  const follow = () => { if (!held()) put(R.askBarPlace(cursor, size, bounds())); };
+  const follow = () => { if (!held()) put(R.askBarPlace(cursor, size, bounds(), R.followSide?.() ?? 0)); };
   // One line, growing to five as you type (then it scrolls).
   const fit = () => {
     ta.style.height = `${LINE}px`;
