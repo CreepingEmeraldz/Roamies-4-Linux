@@ -7,7 +7,8 @@
 import { CONFIG_PATH, DATA_DIR, ROAMIES_DIR } from './datadir.mjs';
 import { Agent } from '@kenkaiiii/gg-agent';
 import { ClaudeCodeAgent, claudeCodeInstaller, closeSpare } from './claudecode.mjs';
-import { SAFE, checkDrawAction, checkLink, checkMcpCall, checkOpen, checkRead, checkWrite, isYes, redactArgs } from './safety.mjs';
+import { SAFE, BLOCK, checkDrawAction, checkLink, checkMcpCall, checkOpen, checkRead, checkWrite, classifyCommand, isYes, redactArgs } from './safety.mjs';
+import { MODES, cleanSaved, normalize as normalizeCommands, savedLine } from './commands.mjs';
 import { agentsRoot, createAgents, holdAfterLaunch, newsDesk, wantsAgent } from './agents.mjs';
 import { agentEvents, stallWatch } from './agentstream.mjs';
 import { CATALOG_PROVIDERS, createCatalogs } from './catalogs.mjs';
@@ -655,7 +656,7 @@ let turnVoice = null;
 const { tools, hands, whereNow, frontNow: frontData, frontBounds, ink, nextTurn } = createTools({
   focus: HANDS_OK ? { start: (m, t) => startFocus(m, t), stop: () => stopFocus() } : null,
   firedReminders: () => firedReminders,
-  allowActions: () => config.allowActions, skipAllow: () => !!config.allowActions && !!config.skipAllow, ui, ask, openUrl, userName,
+  allowActions: () => config.allowActions, skipAllow: () => !!config.allowActions && !!config.skipAllow, commands: commandPolicy, ui, ask, openUrl, userName,
   speak: (line) => { if (!turnVoice) return false; turnVoice.say(line); return true; },
   onHandoff: (task) => { activity.handoff(task); panel(); },
   // Once per run: say what is missing and where to find it, instead of marks quietly landing on guesses.
@@ -700,7 +701,7 @@ const agents = createAgents({
   fork, ui, root: agentsRoot(), userName, runner: fileURLToPath(new URL('./agentrun.mjs', import.meta.url)),
   safety: { checkRead, checkWrite, checkOpen, checkLink }, log: (kind, data) => { logLine(kind, data); if (kind === 'agent_end') panel(); }, // a scheduled job's row shows how its run went
   config: {
-    model: agentModel, subagent: (name) => { const s = config.subagents ? findSubagent(name, crewNow()) : null; return s ? { id: s.id, label: s.label, type: s.type, role: s.role, spec: s.spec.spec, slot: s.slot } : null; }, userWords: () => turnWords, openUrl: (u) => openUrl(u), creds: (m) => credsFor(m.provider, m.model), allowActions: () => !!config.allowActions, skipAllow: () => !!config.allowActions && !!config.skipAllow, image: () => turnImage,
+    model: agentModel, subagent: (name) => { const s = config.subagents ? findSubagent(name, crewNow()) : null; return s ? { id: s.id, label: s.label, type: s.type, role: s.role, spec: s.spec.spec, slot: s.slot } : null; }, userWords: () => turnWords, openUrl: (u) => openUrl(u), creds: (m) => credsFor(m.provider, m.model), allowActions: () => !!config.allowActions, skipAllow: () => !!config.allowActions && !!config.skipAllow, commands: commandPolicy, image: () => turnImage,
     open: (p) => (process.platform === 'win32' ? winOpen(p) : new Promise((r) => execFile(MAC ? 'open' : 'xdg-open', [p], () => r()))),
     reveal: async (p) => reveal(p),
   },
@@ -711,7 +712,7 @@ tools.push(...agents.tools);
 const mcp = createMcp({ secrets, log: (kind, data) => logLine(kind, data) });
 tools.push(...createMcpTools({
   mcp, ask, isYes, userName, checkCall: checkMcpCall, openUrl: (u) => openUrl(u),
-  allowActions: () => !!config.allowActions, skipAllow: () => !!config.allowActions && !!config.skipAllow,
+  allowActions: () => !!config.allowActions, skipAllow: () => !!config.allowActions && !!config.skipAllow, commands: commandPolicy,
   keyStore: MAC ? 'Keychain' : LINUX ? 'keyring' : 'Windows key store',
 }));
 let requestNo = 0; // the request being answered (nextTurn), for holdAfterLaunch
@@ -841,7 +842,7 @@ const livePrompt = (context = '') => {
   lastFactIds = facts.map((f) => f.id);
   const open = commitmentsText(), done = doneTodayText(), working = agents.liveText(), scheduled = jobsText(fmtWhen), learned = skillIndex(), linked = mcp.liveText();
   const turn = `Live state (current as of this moment):
-${frontNow ? `${frontNow}\n` : ''}${lookLine(session?.looks, config.look ?? 'classic', nameOfLook, userName)}${inkLine()}${focusLine()}${crewLine()}${linked ? `- Connections (connection_tools shows a server's tools, use_connection calls one):\n${linked}\n` : ''}- Editing files, running commands and controlling other apps: ${config.allowActions ? 'ALLOWED' : `switched OFF (tell the user to turn on "Allow File Edits & Commands" on the General page in ${PANEL} if they want it)`}.${config.allowActions && config.skipAllow ? ' Allow prompts are skipped: confirmations go ahead automatically, so be extra careful.' : ''}
+${frontNow ? `${frontNow}\n` : ''}${lookLine(session?.looks, config.look ?? 'classic', nameOfLook, userName)}${inkLine()}${focusLine()}${config.allowActions ? savedLine(commandPolicy().saved) : ''}${crewLine()}${linked ? `- Connections (connection_tools shows a server's tools, use_connection calls one):\n${linked}\n` : ''}- Editing files, running commands and controlling other apps: ${config.allowActions ? 'ALLOWED' : `switched OFF (tell the user to turn on "Allow File Edits & Commands" on the General page in ${PANEL} if they want it)`}.${config.allowActions && config.skipAllow ? ' Allow prompts are skipped: confirmations go ahead automatically, so be extra careful.' : ''}
 ${VOICE_OK ? `- Voice: ${!config.voice ? 'off' : voiceReady() ? `on; ${HOTKEYS_OK ? `${userName} holds ${talkWords()} to talk` : `${userName} presses the key they bound to ${BIND.talk} to start talking and again to send (a pause sends too)`}${config.autoListen ? (config.listenEvery ? `. Auto-listen is on for every reply: after each spoken reply the mic opens by itself for ${listenSecs()} seconds, so they can just keep talking` : '. Auto-listen is on: when your reply to a spoken question ends with a question, the mic opens by itself for their answer') : ''}${!WAKE_OK ? '. There is no wake word on this computer: to talk they use the talk keys' : ''}${WAKE_OK && config.wakeWord ? `. Wake word is on: ${userName} can also say "Hey ${wakeName(config)}" to start talking hands-free, and what they say right after it is the request (a request that still starts with "Hey ${wakeName(config)}" is them waking you, not calling you by another name: never correct it)${config.wakeName ? ` (they chose "${config.wakeName}" as the wake word; your own name is unchanged)` : ''}` : ''}` : `on, but the speech model isn't downloaded yet (${voiceModel.status === 'downloading' ? 'downloading now' : `the Listening page in ${PANEL}`})`}.` : ''}
 - Shortcuts: ${HOTKEYS_OK ? `${keys().write ? `type a question to you: a quick tap of ${writeWords()} (press both and let go), which opens a text field beside the cursor (Enter sends, Shift+Enter adds a line, Esc or another tap closes it)` : `the tap that opens a text field to type a question is turned off (the Ask button in ${PANEL} still opens it; the Shortcuts page there turns the tap back on)`}; show or hide you ${keyWords(keys().summon)}` : `on this Wayland desktop no app can have global shortcuts, so ${userName} binds keys to these commands in their desktop's keyboard settings: ${BIND.summon} (show or hide you), ${BIND.ask} (ask you), ${BIND.list} (the list), ${BIND.talk} (talk) and ${BIND.panel} (the panel)`}${SNAP_OK ? `; ask about an area ${keyWords(keys().snap)}` : ''}${CIRCLE_OK ? "; while holding the talk keys, moving the cursor round something circles it (no clicking; it snaps shut with a click when the circle closes, and loose lines don't count) and you'll see what they circled" : ''}${HOTKEYS_OK ? `; show the list ${keyWords(keys().list)}` : ''}.${HANDS_OK ? '' : ATSPI_OK ? ' In other apps you can press buttons and fill fields by their labels (act_in_app), but not click pixels or scroll them; you draw with x, y from a screenshot.' : ' Asking about an area, reading app windows, finding things on screen by their words and working other apps need the Roamies app, which isn\'t running here; draw there with x, y from a screenshot.'}`;
   const memory = `${open ? `Open commitments:\n${open}` : 'No open commitments.'}${done ? `\nDone today (ticked off on the list or by you; still shown struck through until midnight):\n${done}` : ''}
@@ -2311,6 +2312,8 @@ function panel() {
 // Opens the panel on a page (the one-time tab rides on its next state).
 let panelTab = null;
 function openPanel(tab) { panelTab = tab; send({ type: 'panel_show' }); if (panelOpen) panel(); }
+// The Commands page: when commands ask, which kinds are blocked, and the commands saved to run by name.
+const commandPolicy = () => normalizeCommands(config.commands);
 const panelNote = (text, bad = false, p = null) => panelOpen && send({ type: 'panel', msg: { kind: 'note', text, bad, ...(p ? linked(p) : {}) } });
 // Linux: what Roamies needs from the desktop (deps.mjs), checked when the panel opens and when asked again.
 let depsList = null;
@@ -2383,7 +2386,7 @@ function panelState() {
       mics: mics.list, mic: config.mic ?? '', micAuto: mics.list.find((x) => x.id === mics.auto)?.name ?? '',
       download: NEEDS_MODEL && config.voice && !voiceReady() ? { status: voiceModel.status, pct: voiceModel.total ? Math.floor((voiceModel.done / voiceModel.total) * 100) : 0, size: sizeLabel() } : null,
     } : null,
-    sound: !!config.sound, volume: volumeNow(), actions: !!config.allowActions, skipAllow: !!config.skipAllow, lite: !!config.lite, hybrid: { on: !!config.hybrid, jobs: JOB_KINDS.map((j) => ({ ...j, value: parseSpec(config.heavy?.[j.kind])?.spec ?? '' })), active: routed?.spec ?? '' }, subagents: { on: !!config.subagents, delegate: DELEGATE_MODES.includes(config.delegate) ? config.delegate : 'ask', crew: SUBAGENTS.map((s) => { const c = activeCrew(config.crew, crewSpec, hybridActive() ? config.heavy : null).find((x) => x.id === s.id); return { id: s.id, label: s.label, hint: s.hint, value: parseSpec(config.crew?.[s.id])?.spec ?? '', via: c?.via ?? '', uses: c?.spec.spec ?? '' }; }) }, efforts: Object.fromEntries(SLOTS.map((k) => [k, config.efforts?.[k] ?? ''])), fallbacks: { on: !!config.backups, slots: [0, 1].map((i) => parseSpec(config.fallbacks?.[i])?.spec ?? ''), limited: limits.list().filter((l) => !l.key.includes(':') && (isQuota(l.kind) || l.kind === 'busy')).map((l) => ({ label: PROVIDER_LABELS[l.key] ?? l.key, until: l.until })), unavailable: limits.list().filter((l) => !(isQuota(l.kind) || l.kind === 'busy')).map((l) => ({ label: PROVIDER_LABELS[l.key] ?? modelName(l.key.split(':').slice(1).join(':')) ?? l.key, why: becauseOf(l.kind), until: l.until })), using: routed && /^backup/.test(routed.slot ?? '') ? routed.spec : '' }, notch: notchMode(), notchReal: notchScreen, brief: { on: !!config.morningBrief, todoist: !!config.briefTodoist, canTodoist: HANDS_OK }, focus: HANDS_OK ? { until: focusBlock?.until ?? null, task: focusBlock?.task ?? '', list: distractionList(), custom: !!config.distractions } : null, sync: { dir: config.syncDir || '', at: syncInfo.at, error: syncInfo.error, paused: !!syncInfo.paused }, gameMode: HANDS_OK ? config.gameSidebar !== false : null,
+    sound: !!config.sound, volume: volumeNow(), actions: !!config.allowActions, skipAllow: !!config.skipAllow, commands: commandPolicy(), lite: !!config.lite, hybrid: { on: !!config.hybrid, jobs: JOB_KINDS.map((j) => ({ ...j, value: parseSpec(config.heavy?.[j.kind])?.spec ?? '' })), active: routed?.spec ?? '' }, subagents: { on: !!config.subagents, delegate: DELEGATE_MODES.includes(config.delegate) ? config.delegate : 'ask', crew: SUBAGENTS.map((s) => { const c = activeCrew(config.crew, crewSpec, hybridActive() ? config.heavy : null).find((x) => x.id === s.id); return { id: s.id, label: s.label, hint: s.hint, value: parseSpec(config.crew?.[s.id])?.spec ?? '', via: c?.via ?? '', uses: c?.spec.spec ?? '' }; }) }, efforts: Object.fromEntries(SLOTS.map((k) => [k, config.efforts?.[k] ?? ''])), fallbacks: { on: !!config.backups, slots: [0, 1].map((i) => parseSpec(config.fallbacks?.[i])?.spec ?? ''), limited: limits.list().filter((l) => !l.key.includes(':') && (isQuota(l.kind) || l.kind === 'busy')).map((l) => ({ label: PROVIDER_LABELS[l.key] ?? l.key, until: l.until })), unavailable: limits.list().filter((l) => !(isQuota(l.kind) || l.kind === 'busy')).map((l) => ({ label: PROVIDER_LABELS[l.key] ?? modelName(l.key.split(':').slice(1).join(':')) ?? l.key, why: becauseOf(l.kind), until: l.until })), using: routed && /^backup/.test(routed.slot ?? '') ? routed.spec : '' }, notch: notchMode(), notchReal: notchScreen, brief: { on: !!config.morningBrief, todoist: !!config.briefTodoist, canTodoist: HANDS_OK }, focus: HANDS_OK ? { until: focusBlock?.until ?? null, task: focusBlock?.task ?? '', list: distractionList(), custom: !!config.distractions } : null, sync: { dir: config.syncDir || '', at: syncInfo.at, error: syncInfo.error, paused: !!syncInfo.paused }, gameMode: HANDS_OK ? config.gameSidebar !== false : null,
     login: login.supported ? { on: login.on } : null,
     update: { available: update.available, installing: update.installing, checking: update.checking, result: update.result, page: update.page, done: update.done },
     intro: !!intro,
@@ -2978,6 +2981,24 @@ createInterface({ input: process.stdin }).on('line', (line) => {
     if (storageKeyProvider(id) !== m.provider) return;
     apiKeyLogin(id, m.key.slice(0, 1000)).then(() => panelNote(signedIn.get(m.provider) ? `${label} is connected.` : `That ${label} key didn't work.`, !signedIn.get(m.provider)))
       .catch((e) => { const p = problem('key', e, { store: KEY_STORE }); panelNote(p.text, true, p); });
+  } else if (m.type === 'panel_cmd' && typeof m.op === 'string') {
+    const cur = commandPolicy(), list = m.list === 'blocked' || m.list === 'trusted' ? m.list : null;
+    let next = cur;
+    if (m.op === 'mode' && MODES.includes(m.value)) next = { ...cur, mode: m.value };
+    else if (m.op === 'add' && list && typeof m.pattern === 'string' && m.pattern.trim()) next = { ...cur, [list]: [...cur[list], m.pattern] };
+    else if (m.op === 'remove' && list && Number.isInteger(m.index)) next = { ...cur, [list]: cur[list].filter((_, i) => i !== m.index) };
+    else if (m.op === 'delete' && typeof m.id === 'string') next = { ...cur, saved: cur.saved.filter((c) => c.id !== m.id) };
+    else if (m.op === 'save') {
+      const c = cleanSaved(m.cmd);
+      const v = c && classifyCommand(c.command, HOME, { exists: existsSync });
+      if (!c) { panelNote('A saved command needs a name and a command.', true); return; }
+      if (v.level === BLOCK) { panelNote(`I can't run that one: ${v.reason}`, true); return; }
+      const at = cur.saved.findIndex((x) => x.id === (typeof m.editId === 'string' ? m.editId : ''));
+      const clash = cur.saved.some((x, i) => i !== at && x.name.toLowerCase() === c.name.toLowerCase());
+      if (clash) { panelNote(`There's already a saved command called ${c.name}.`, true); return; }
+      next = { ...cur, saved: at >= 0 ? cur.saved.map((x, i) => (i === at ? c : x)) : [...cur.saved, c] };
+    } else return;
+    config.commands = normalizeCommands(next); saveConfig(); menu();
   } else if (m.type === 'panel_local_add' && typeof m.label === 'string' && typeof m.baseUrl === 'string') {
     addServer({ label: m.label.slice(0, 200), baseUrl: m.baseUrl.slice(0, 500), key: typeof m.key === 'string' ? m.key.trim().slice(0, 1000) : '', images: m.images === true }).catch((e) => console.error('add server', e));
   } else if ((m.type === 'panel_fishkey' || m.type === 'panel_geminikey') && typeof m.key === 'string') voiceKeyLogin({ provider: m.type === 'panel_geminikey' ? 'gemini' : 'fish', given: m.key.slice(0, 1000), note: panelNote }).catch((e) => console.error('voice key', e));

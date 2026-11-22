@@ -16,7 +16,7 @@
   let state = null, tab = 'home', deferred = false;
   // What's open in the panel itself: a key field (provider id, 'fish' or 'gemini'), the row action waiting for its
   // Confirm, each long list's page (pg) and how many rows fit on one (per, measured), Memory's tab and its search.
-  const ui = { key: null, kind: {}, arm: null, add: { label: '', url: '', key: '', images: false }, addSent: null, pg: {}, per: {}, base: {}, rec: null, mtab: 'facts', tabs: {}, q: '', bindShown: new Set() };
+  const ui = { key: null, kind: {}, arm: null, add: { label: '', url: '', key: '', images: false }, addSent: null, pg: {}, per: {}, base: {}, rec: null, mtab: 'facts', tabs: {}, q: '', bindShown: new Set(), cmd: { edit: null, name: '', phrases: '', command: '', ask: 'default', blockIn: '', trustIn: '' } };
   let armTimer = 0;
   const disarm = () => { clearTimeout(armTimer); if (ui.arm) { ui.arm = null; return true; } return false; };
 
@@ -972,6 +972,58 @@
       foot: foot(btn('Connect an app', () => act('askconnect', true), { k: 'askconnect' }), nav),
     };
   }
+  // Commands: whether I ask before running one, kinds I never run, and commands saved to run by name.
+  const CMD_MODES = [['smart', 'When it looks risky'], ['always', 'Every time'], ['never', 'Never'], ['listed', 'Except my list']];
+  const CMD_TIPS = {
+    smart: 'I ask only for commands that change or delete things. The usual way.',
+    always: 'I ask before every command, even harmless ones.',
+    never: 'I run commands without asking. Anything blocked for safety, or on your never list, is still not run.',
+    listed: "I run the commands on your list without asking, and ask before everything else.",
+  };
+  function commandsPage() {
+    const c = state.commands ?? { mode: 'smart', blocked: [], trusted: [], saved: [] };
+    const q = ui.cmd;
+    const send1 = (op, extra = {}) => send({ type: 'panel_cmd', op, ...extra });
+    const field = (id, label, prop, o = {}) => el('span', { className: 'px field' }, el('input', {
+      id, value: q[prop], 'aria-label': label, placeholder: o.placeholder ?? label, type: 'text', autocomplete: 'off', spellcheck: false, maxLength: o.max ?? 200,
+      on: { input: (e) => { q[prop] = e.target.value; }, keydown: (e) => { if (e.key === 'Enter' && o.enter) o.enter(); } } }));
+    // A list of patterns you can add to and remove from: "git status" also covers "git status -s"; * stands for anything.
+    const patterns = (title, desc, list, name, input, placeholder) => {
+      const add = () => { const v = q[input].trim(); if (!v) return $(`cmd-${input}`)?.focus(); q[input] = ''; send1('add', { list: name, pattern: v }); render(`cmd-${input}`); };
+      return group(title, desc, list.length || null,
+        list.map((pat, i) => el('div', { className: 'setting' }, el('span', { className: 'mono', textContent: pat, title: pat }),
+          link('Remove', () => send1('remove', { list: name, index: i }), { k: `cmd-rm:${name}:${i}`, aria: `Remove ${pat}` }))),
+        el('div', { className: 'setting' }, field(`cmd-${input}`, title, input, { placeholder, enter: add }), link('Add', add, { k: `cmd-add:${name}`, aria: `Add to ${title}` })));
+    };
+    const editing = q.edit != null;
+    const edit = () => {
+      const save = () => {
+        if (!q.name.trim()) return $('cmd-name')?.focus();
+        if (!q.command.trim()) return $('cmd-command')?.focus();
+        send1('save', { editId: q.edit === 'new' ? '' : q.edit, cmd: { name: q.name, phrases: q.phrases, command: q.command, ask: q.ask } });
+        q.edit = null; render('cmd-new');
+      };
+      return el('div', { className: 'addserver' },
+        field('cmd-name', 'Name', 'name', { placeholder: 'Name, e.g. Next window', max: 40, enter: save }),
+        field('cmd-phrases', 'Things you might say', 'phrases', { placeholder: 'What you say, separated by commas: next window, move right', max: 300, enter: save }),
+        field('cmd-command', 'Command', 'command', { placeholder: 'Command, e.g. niri msg action focus-column-right', max: 500, enter: save }),
+        picks('Ask before running it', [['default', 'Like the rest'], ['always', 'Always ask'], ['never', 'Never ask']], q.ask, (v) => { q.ask = v; render(`cmdask:${v}`); }, 'cmdask'),
+        el('div', { className: 'row-btns' }, btn('Save', save, { k: 'cmd-save' }), link('Cancel', () => { q.edit = null; render('cmd-new'); }, { k: 'cmd-cancel' })));
+    };
+    const open = (x) => { q.edit = x ? x.id : 'new'; q.name = x?.name ?? ''; q.phrases = x?.phrases.join(', ') ?? ''; q.command = x?.command ?? ''; q.ask = x?.ask ?? 'default'; render('cmd-name'); };
+    return [
+      group('Commands', 'Whether I ask before running a command.', null,
+        !state.actions ? el('div', { className: 'setting' }, el('span', {}, 'Commands are off', el('small', { textContent: 'Turn on file edits and commands to let me run them.' })), link('Turn on', () => act('actions'), { k: 'cmd-on' })) : null,
+        picks('Ask before running a command', CMD_MODES, c.mode, (v) => send1('mode', { value: v }), 'cmdmode', CMD_TIPS)),
+      c.mode === 'listed' ? patterns('Run without asking', 'Commands that never need a yes. "git status" also covers "git status -s", and * stands for anything: niri msg *', c.trusted, 'trusted', 'trustIn', 'Command, e.g. git status') : null,
+      patterns('Never run', 'Kinds of command I refuse, whatever else is set. Built-in safety rules always apply as well.', c.blocked, 'blocked', 'blockIn', 'Command, e.g. sudo or rm -rf *'),
+      group('My commands', 'Name a command and say it any time: "next window" can run niri msg action focus-column-right.', c.saved.length || null,
+        c.saved.map((x) => el('div', { className: 'setting' },
+          el('span', {}, x.name, el('small', { textContent: `${x.command}${x.phrases.length ? ` · ${x.phrases.join(', ')}` : ''}`, className: 'wrap' })),
+          el('span', { className: 'row-btns' }, link('Edit', () => open(x), { k: `cmd-edit:${x.id}`, aria: `Edit ${x.name}` }), link('Delete', () => send1('delete', { id: x.id }), { k: `cmd-del:${x.id}`, danger: true, aria: `Delete ${x.name}` })))),
+        editing ? edit() : el('div', { className: 'setting' }, el('span', {}), link('Add a command', () => open(null), { k: 'cmd-new' }))),
+    ];
+  }
   // What I may do, and when I start.
   function generalPage() {
     return [
@@ -1078,7 +1130,7 @@
   }
 
   // ---------------------------------------------------------------- render
-  const PANES = { home, memory, abilities: abilitiesPage, model: modelPage, appearance: appearancePage, speaking: speakingPage, listening: listeningPage, shortcuts: shortcutsPage, general: generalPage, deps: depsPage, about: aboutPage, whatsnew: whatsNewPage };
+  const PANES = { home, memory, abilities: abilitiesPage, model: modelPage, appearance: appearancePage, speaking: speakingPage, listening: listeningPage, shortcuts: shortcutsPage, general: generalPage, commands: commandsPage, deps: depsPage, about: aboutPage, whatsnew: whatsNewPage };
   // focusKey: what to focus after (a data-k, or an element id); otherwise whatever had focus keeps it.
   function render(focusKey, animate = false) {
     if (!state) return;
@@ -1325,7 +1377,8 @@
       // Effort per slot: '' is automatic (low); computer use is set to High, and backup 1 (Gemini, which only thinks at High) too.
       efforts: { default: '', computer: 'high', code: '', agents: '', draw: '', web: '', backup1: 'high', backup2: '' },
       voice: { on: true, keys: '⌃⌥', ready: true, mac: true, lang: 'auto', langOnline: null, studioSpeak: 'short', mute: true, autoListen: q.has('listen'), listenEvery: false, listenSecs: 8, listenChoices: [3, 5, 8, 10, 15], mics: [{ id: 'BuiltIn', name: 'MacBook Pro Microphone' }, { id: 'airpods', name: 'AirPods Pro' }], mic: '', micAuto: 'MacBook Pro Microphone', wake: !q.has('nowake'), wakeWord: false, wakeName: 'Roamies', download: null }, askKeys: '⌥⌘', brief: { on: true, todoist: false, canTodoist: true }, focus: { until: null, task: '', list: ['YouTube', 'Reddit', 'X', 'Steam', 'Netflix'], custom: false }, sync: { dir: '', at: null, error: null, paused: false }, shortcuts: { talk: { value: 'control+option', pairs: [['control+option', 'Control+Option'], ['option+command', 'Option+Command'], ['control+command', 'Control+Command'], ['control+shift', 'Control+Shift'], ['option+shift', 'Option+Shift']] }, keys: [{ id: 'summon', words: 'Control+Option+S' }, { id: 'snap', words: 'Control+Option+A' }, { id: 'list', words: 'Control+Option+L' }] }, writeKeys: { value: 'option+command', pairs: [['option+command', 'Option+Command'], ['control+command', 'Control+Command'], ['control+shift', 'Control+Shift'], ['option+shift', 'Option+Shift']] },
-      sound: true, notch: q.has('notch') || q.has('capsule') ? 'drop' : null, notchReal: q.has('notch'), actions: false, skipAllow: false, login: { on: true },
+      sound: true, notch: q.has('notch') || q.has('capsule') ? 'drop' : null, notchReal: q.has('notch'), actions: true, skipAllow: false, login: { on: true },
+      commands: q.has('cmds') ? { mode: 'listed', blocked: ['sudo', 'rm -rf *'], trusted: ['git status', 'niri msg *'], saved: [{ id: 'next-window', name: 'Next window', phrases: ['next window', 'move right'], command: 'niri msg action focus-column-right', ask: 'never' }] } : undefined,
       update: { available: new URLSearchParams(location.search).has('update') && new URLSearchParams(location.search).get('update') !== 'failed' ? '0.9.1' : null, installing: false, checking: false, result: null },
       intro: false,
     };

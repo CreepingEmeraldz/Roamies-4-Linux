@@ -9,6 +9,7 @@ import path from 'node:path';
 import { createWebFetchTool, createWebSearchTool, runSideWebSearch, runSideWebSearchViaClaudeCode } from '@kenkaiiii/ggcoder/web';
 import { z } from 'zod';
 import { parseSipsSize, readProblem, rematch, sameBounds, shotFits, shotMap, shotProblem, shotUnits, snapRect, toScreen } from './pointing.mjs';
+import { decide, findSaved } from './commands.mjs';
 import { ASK, BLOCK, checkDrawAction, checkFetch, checkOpen, checkRead, checkWrite, classifyCommand, isRiskyClick, isYes, riskyKind } from './safety.mjs';
 import { CARDS, DrawArgs, drawModelSchema, LIMITS, checkDraw, createLists, createParts, createPhotos, describeParts, faviconFor, pickTextMatch, quizNote, readSecs, resolveTargets } from './draw.mjs';
 import { plain } from './intro.mjs';
@@ -253,7 +254,7 @@ export function oneYesNoAtATime(ask) {
   };
 }
 
-export function createTools({ allowActions, ui, ask, openUrl, onCommitments, focus = null, firedReminders = () => [], showList, fmtWhen, commitmentsText, userName, onPlan = () => {}, speak = () => false, onHandoff = () => {}, onMissingDep = () => {}, watchClicks = () => {}, onInkGone = () => {}, askShell = async () => ({ ok: false, error: 'Roamies isn\'t running.' }), workdir = HOME, own = null, sideSearch = async () => null, pointScale = () => 'pixels', skipAllow = () => false, jobs = null, skills = null }) {
+export function createTools({ allowActions, ui, ask, openUrl, onCommitments, focus = null, firedReminders = () => [], showList, fmtWhen, commitmentsText, userName, onPlan = () => {}, speak = () => false, onHandoff = () => {}, onMissingDep = () => {}, watchClicks = () => {}, onInkGone = () => {}, askShell = async () => ({ ok: false, error: 'Roamies isn\'t running.' }), workdir = HOME, own = null, sideSearch = async () => null, pointScale = () => 'pixels', skipAllow = () => false, commands = () => ({}), jobs = null, skills = null }) {
   // Relative paths (and run_command) start in workdir: ~/Roamies for the chat, its own folder for an agent.
   const at = (p) => { const s = String(p ?? ''); return /^~(?=$|\/|\\)/.test(s) || path.isAbsolute(s) || /^[a-z]:[\\/]/i.test(s) ? s : path.join(workdir, s); };
   const where = workdir === HOME ? "the user's home folder" : `its working folder (${workdir})`;
@@ -337,10 +338,28 @@ export function createTools({ allowActions, ui, ask, openUrl, onCommitments, foc
   }
   // A yes/no in an input bubble. Stop (or the turn ending) counts as no.
   // Only the yes/no is skipped (skipAllow: the user turned "Skip Allow prompts" on). BLOCK verdicts never reach here.
-  async function confirm(question, ctx) {
-    if (skipAllow()) return true;
+  // forced: asked for on the Commands page, so skipping Allow prompts doesn't skip it.
+  async function confirm(question, ctx, forced = false) {
+    if (!forced && skipAllow()) return true;
     const answer = await ask({ placeholder: question, choices: ['Allow', "Don't allow"] }, ctx?.signal);
     return isYes(answer);
+  }
+
+  // A shell command: the built-in safety rules first (blocked stays blocked), then what the Commands page says about asking.
+  async function runShell(command, ctx, askSetting = 'default') {
+    if (!allowActions()) throw new Error(actionsOff);
+    const v = classifyCommand(command, HOME, { exists: existsSync, cwd: workdir, own });
+    if (v.level === BLOCK) throw new Error(`Blocked for safety: ${v.reason} Don't try to get around this; tell ${userName} what you wanted to do instead.`);
+    const d = decide(command, v.level, commands(), askSetting);
+    if (d.action === 'block') throw new Error(`Blocked: ${d.reason} Don't try to get around this; tell ${userName} what you wanted to do instead.`);
+    if (d.action === 'ask' && !(await confirm(`Run \`${command.length > 70 ? command.slice(0, 67) + '…' : command}\`?${v.reason ? ' ' + v.reason : ''}`, ctx, d.forced))) {
+      throw new Error(`${userName} said no, so the command didn't run.`);
+    }
+    const [sh, shArgs, shOpts] = shellFor(command);
+    const r = await run(sh, shArgs, { ...shOpts, cwd: workdir, env: { ...process.env, ...GIT_SAFE } });
+    const out = clip((r.stdout + (r.stderr ? `\n[stderr]\n${r.stderr}` : '')).trim() || '(no output)', 12_000);
+    if (r.err && r.err.code !== 0) throw new Error(`Exit ${r.err.code ?? r.err.signal}\n${out}`);
+    return out;
   }
 
   // The helper's screenshot: one window or app (even behind others), or the screen; shrunk by the helper itself.
@@ -1013,18 +1032,15 @@ A drawing stays until it's cleared, the window changes or the next one replaces 
     {
       name: 'run_command', description: `Run a shell command in ${where} and return its output, for what other tools can't do (counting, sorting, mdfind to find files by name, git, moving or copying). Open things with open, and make or edit files with write_file (several: one call each, in the same turn): never sed -i or tee, and never a shell loop that makes files, which always needs a yes. A > redirect into a new file is fine; overwriting a file or changing things asks the user first, which is slow.`,
       parameters: z.object({ command: z.string() }), executionMode: 'sequential', timeoutMs: 190_000, // up to 2 min to answer, then the 60 s run
-      execute: async ({ command }, ctx) => {
-        if (!allowActions()) throw new Error(actionsOff);
-        const v = classifyCommand(command, HOME, { exists: existsSync, cwd: workdir, own });
-        if (v.level === BLOCK) throw new Error(`Blocked for safety: ${v.reason} Don't try to get around this; tell ${userName} what you wanted to do instead.`);
-        if (v.level === ASK && !(await confirm(`Run \`${command.length > 70 ? command.slice(0, 67) + '…' : command}\`?${v.reason ? ' ' + v.reason : ''}`, ctx))) {
-          throw new Error(`${userName} said no, so the command didn't run.`);
-        }
-        const [sh, shArgs, shOpts] = shellFor(command);
-        const r = await run(sh, shArgs, { ...shOpts, cwd: workdir, env: { ...process.env, ...GIT_SAFE } });
-        const out = clip((r.stdout + (r.stderr ? `\n[stderr]\n${r.stderr}` : '')).trim() || '(no output)', 12_000);
-        if (r.err && r.err.code !== 0) throw new Error(`Exit ${r.err.code ?? r.err.signal}\n${out}`);
-        return out;
+      execute: ({ command }, ctx) => runShell(command, ctx),
+    },
+    {
+      name: 'run_saved_command', description: "Run one of the user's saved commands by its name (the prompt lists them). The command itself can't be changed; call this only for one that is listed.",
+      parameters: z.object({ name: z.string() }), executionMode: 'sequential', timeoutMs: 190_000,
+      execute: ({ name }, ctx) => {
+        const c = findSaved(commands().saved, name);
+        if (!c) throw new Error(`There's no saved command called "${name}". Don't guess one: say so, or use run_command if the user described what to run.`);
+        return runShell(c.command, ctx, c.ask);
       },
     },
     // GG Coder's own web tools: search with a side search or keyless engines, pages as Markdown with offset to read on.

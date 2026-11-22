@@ -136,3 +136,7 @@ which is the first thing to look at when screenshots feel slow.
 - To follow upstream: `git fetch` upstream's tag, merge it into `linux`, fix any conflicts, run the tests, push, and run the
   workflow. There is one long-lived branch (`linux`); the old per-version branches are gone.
 - Upstream's own release workflows were removed here: they need signing keys this fork doesn't have.
+
+## Commands page
+
+The panel's **Commands** page controls when Roamies asks before running a shell command (when it looks risky, every time, never, or never for a list you set), which kinds of command it must refuse, and commands you save to run by name, like "next window" for `niri msg action focus-column-right`. The built-in safety rules always apply on top of it.

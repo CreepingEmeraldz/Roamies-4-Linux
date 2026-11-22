@@ -1,13 +1,9 @@
-## Roamies waits out a rate limit instead of giving up
+## A Commands page
 
-When a provider says you're going too fast (Gemini's free tier does this a lot), and no backup model is set up to take over, Roamies now says so, for example "Gemini is rate limiting me. I'll try again in a minute", with a **Cancel** button. When the time is up, it carries on from where it stopped. It uses the wait the provider asks for when it gives one, and a minute when it doesn't.
+There's a new **Commands** page in the panel for how Roamie runs shell commands.
 
-It tries up to three times. It doesn't wait for daily or monthly quotas or an empty account, since those won't clear in minutes, and shows the usual message instead. Sending a new message also ends the wait.
+- **When to ask.** Choose between asking when a command looks risky (as before), asking every time, never asking, or never asking only for the commands on your own list (and asking for everything else). "Never ask" and your list skip only the yes: anything the built-in safety rules block stays blocked.
+- **Never run.** A list of kinds of command Roamie must refuse in every mode, such as `sudo` or `rm -rf *`. It also catches them when chained (`echo hi && sudo reboot`).
+- **My commands.** Save a command with a name and the phrases you'd say, for example "next window" for `niri msg action focus-column-right`. Roamie runs it by name, so the AI can't change what runs, and each one can be set to always ask, never ask, or follow the general setting. Nothing is added for people who don't use these.
 
-## The text box keeps clear of Roamie
-
-Instead of only choosing a side, the type-to-ask box now looks at where Roamie actually is and takes whichever corner of the cursor (below or above, left or right) doesn't overlap him, including at the screen edges.
-
-## Roamie can scroll other apps
-
-In another app, Roamie can now scroll the page or list in front by pages, or jump to the end of a feed that loads more as you go (up and down, left and right). It presses Page Up and Page Down and Home and End through `wtype`, so it needs `wtype` installed, the same as typing. If a text box has the cursor, it asks to click out of it first, since the keys would go into the box.
+In a list, `git status` also covers `git status -s`, and `*` stands for anything (`niri msg *`).

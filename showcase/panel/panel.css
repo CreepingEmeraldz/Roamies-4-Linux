@@ -381,3 +381,5 @@ html, body { height: 100%; background: transparent; }
 
 /* Arabic and Hebrew in a list (dir=auto on the text): the Arabic font first, for its own word spacing. */
 .item .text:dir(rtl) { font-family: "Roamies Arabic RTL", var(--mono); }
+
+.mono { font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace; font-size: 0.92em; overflow-wrap: anywhere; }
