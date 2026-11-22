@@ -1,14 +1,10 @@
-## The model menu shows only what your key can run
+## Long replies are easier to read
 
-Before, the Model menu listed every model a provider has, and picking one your key couldn't use failed when you asked something. Now Roamies asks each provider which models your key can actually use and leaves the rest out of the menu.
+When a reply is too long for its bubble, three things change:
+- Roamie stops following your cursor while it's up, so the bubble stays put and you can reach it.
+- Once the reply has finished, the bubble opens out to its full height (up to about 60% of the screen), starting from the first line, so you can read it without scrolling. Click it to fold it back.
+- It stays up for as long as 90 seconds instead of 30, and the clock pauses while your pointer is on it.
 
-- **OpenRouter:** the list now follows your account's own settings (privacy, provider preferences and guardrails), so models you've ruled out are gone.
-- **OpenAI, Anthropic, Gemini, xAI, DeepSeek and Kimi:** with an API key saved, models the key can't call are hidden.
-- If a provider doesn't answer, or its list looks odd, nothing is hidden and the menu is as it was. If you're signed in with Claude or ChatGPT instead of a key, nothing changes either.
-- If the model you had picked turns out to be one your key can't run, Roamies switches to one it can.
+## The text box glides after your cursor
 
-The list is checked when you save a key and again every few hours.
-
-## The text box no longer sits on top of Roamie
-
-When you open the type-to-ask box, it now goes on the opposite side of the cursor from Roamie, so the two don't overlap. If there's no room on that side, it falls back to the old spot.
+The type-to-ask box now follows the cursor with the same smooth spring Roamie uses, instead of jumping to every position. It still holds still when your cursor is on it, so you can click it.
