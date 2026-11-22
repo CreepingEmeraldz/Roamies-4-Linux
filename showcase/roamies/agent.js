@@ -230,6 +230,8 @@
     const FOLLOW_W = 90;
     // Which side of the cursor it keeps (1 right, -1 left, 0 not following), so the type-to-ask field can take the other one.
     R.followSide = () => (fol.on ? fol.side : 0);
+    // Where its body is now (overlay px), so the type-to-ask field can keep clear of it; null while it's away.
+    R.bodyCircle = () => (visible() ? { x: m.x, y: m.y, r: m.radius * 1.25 } : null);
     // The follow rules, shared with the native follower (buddy.swift) so a handover lands in the same place.
     const folRules = () => {
       const rr = m.radius, r = k.R;

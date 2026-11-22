@@ -11,13 +11,25 @@
   const AHEAD = 18, BELOW = 8, BEHIND = 8;
   // Where its top-left goes for a cursor [x, y], its size [w, h] and the room it may use { l, t, r, b }. side: which side
   // of the cursor Roamie keeps (1 right, -1 left, 0 unknown): the field takes the other one, so they don't sit on each other.
-  R.askBarPlace = (cursor, size, bounds, side = 0) => {
+  R.askBarPlace = (cursor, size, bounds, side = 0, body = null) => {
     const [cx, cy] = cursor, [w, h] = size;
+    const fit = (x, y) => [Math.round(Math.max(bounds.l, Math.min(x, bounds.r - w))), Math.round(Math.max(bounds.t, Math.min(y, bounds.b - h)))];
+    if (body) {
+      // Roamie's body is a circle: of the four spots around the cursor (right or left, below or above), the first one that
+      // clears it, still fits, and isn't under the cursor. If none does, the one farthest from it.
+      const away = ([x, y]) => { const dx = Math.max(x - body.x, 0, body.x - (x + w)), dy = Math.max(y - body.y, 0, body.y - (y + h)); return Math.hypot(dx, dy) - body.r; };
+      const under = ([x, y]) => cx >= x && cx <= x + w && cy >= y && cy <= y + h;
+      const spots = [[cx + AHEAD, cy + BELOW], [cx - BEHIND - w, cy + BELOW], [cx + AHEAD, cy - BELOW - h], [cx - BEHIND - w, cy - BELOW - h]].map((q) => fit(q[0], q[1]));
+      const ok = spots.filter((q) => !under(q));
+      const clear = ok.find((q) => away(q) >= 6);
+      if (clear) return clear;
+      if (ok.length) return ok.reduce((a, q) => (away(q) > away(a) ? q : a));
+    }
     let x = cx + AHEAD, y = cy + BELOW;
     if (side > 0 && cx - BEHIND - w >= bounds.l) x = cx - BEHIND - w;
     else if (x + w > bounds.r) x = cx - BEHIND - w;
     if (y + h > bounds.b) y = cy - BELOW - h;
-    return [Math.round(Math.max(bounds.l, Math.min(x, bounds.r - w))), Math.round(Math.max(bounds.t, Math.min(y, bounds.b - h)))];
+    return fit(x, y);
   };
   if (typeof document === 'undefined') return;
 
@@ -88,7 +100,7 @@
   const over = (x, y) => x >= at[0] && x <= at[0] + size[0] && y >= at[1] && y <= at[1] + size[1];
   // It holds still while the cursor is on it (so it can be clicked); else it's beside the cursor.
   const held = () => !cursor || over(cursor[0], cursor[1]);
-  const follow = () => { if (!held()) glide(R.askBarPlace(cursor, size, bounds(), R.followSide?.() ?? 0)); };
+  const follow = () => { if (!held()) glide(R.askBarPlace(cursor, size, bounds(), R.followSide?.() ?? 0, R.bodyCircle?.() ?? null)); };
   // One line, growing to five as you type (then it scrolls).
   const fit = () => {
     ta.style.height = `${LINE}px`;

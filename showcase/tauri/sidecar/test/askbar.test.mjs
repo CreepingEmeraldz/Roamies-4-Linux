@@ -27,6 +27,19 @@ assert.deepEqual(sided([700, 300], 1), [700 - 8 - 320, 308], 'Roamie on the righ
 assert.deepEqual(sided([700, 300], -1), [718, 308], 'Roamie on the left: field on the right');
 assert.deepEqual(sided([700, 300], 0), [718, 308], 'unknown side: as before');
 assert.deepEqual(sided([200, 300], 1), [218, 308], 'no room on the left: it stays on the right');
+// With Roamie's body known, the field takes the first corner of the cursor that clears it (right/left, below/above).
+const near = (cursor, body) => Array.from(window.Roamie.askBarPlace(cursor, [320, 38], B, 0, body));
+const clearOf = ([x, y], b) => Math.hypot(Math.max(x - b.x, 0, b.x - (x + 320)), Math.max(y - b.y, 0, b.y - (y + 38))) >= b.r;
+assert.deepEqual(near([700, 300], { x: 800, y: 330, r: 30 }), [700 - 8 - 320, 308], 'body on the right, below: field on the left');
+assert.deepEqual(near([700, 300], { x: 600, y: 330, r: 30 }), [718, 308].map((v, i) => (i ? v : v)), 'body on the left: field on the right');
+const crowded = near([700, 300], { x: 870, y: 330, r: 30 });
+assert.ok(clearOf(crowded, { x: 870, y: 330, r: 30 }), 'clear of the body');
+// At the right edge the body flips left with it: the field still finds a clear corner.
+for (const [c, b] of [[[1400, 300], { x: 1350, y: 330, r: 30 }], [[1420, 400], { x: 1370, y: 360, r: 30 }], [[40, 300], { x: 90, y: 330, r: 30 }], [[700, 800], { x: 750, y: 770, r: 30 }]]) {
+  const p = near(c, b);
+  assert.ok(inside(p) && !covers(p, [320, 38], c), `on screen, not under the cursor: ${c}`);
+  assert.ok(clearOf(p, b), `clear of the body at ${c}: ${p}`);
+}
 // Five lines tall (110 px): it flips up sooner.
 assert.deepEqual(place([400, 700], [320, 110]), [418, 700 - 8 - 110]);
 // Always inside the safe area and never under the cursor, wherever the cursor is (even over the menu bar or Dock).
