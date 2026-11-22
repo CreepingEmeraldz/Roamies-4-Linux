@@ -36,18 +36,18 @@ assert.equal(await c.refreshStale(['openrouter']), false);
 assert.deepEqual(getModelsForProvider('openrouter').map((m) => m.id), builtIn);
 
 // Online: OpenRouter's whole tool-capable list replaces the built-in one, read with the key from its endpoint.
-answers = { 'https://openrouter.ai/api/v1/models': { body: routerBody } };
+answers = { 'https://openrouter.ai/api/v1/models/user': { body: routerBody } };
 calls.length = 0;
 assert.equal(await c.refreshStale(['openrouter']), false, 'a failed read waits before trying again');
 assert.equal(calls.length, 0);
 t += RETRY_MS;
 assert.equal(await c.refreshStale(['openrouter']), true);
-assert.deepEqual(calls, [{ url: 'https://openrouter.ai/api/v1/models', auth: 'Bearer sk-or-test' }]);
+assert.deepEqual(calls, [{ url: 'https://openrouter.ai/api/v1/models/user', auth: 'Bearer sk-or-test' }]);
 assert.deepEqual(getModelsForProvider('openrouter').map((m) => m.id), ['anthropic/claude-x', 'google/gemini-y'], 'models that cannot call tools are left out');
 assert.equal(getModel('anthropic/claude-x').provider, 'openrouter');
 await flushWrites();
 const saved = JSON.parse(await fs.readFile(path.join(dir, 'openrouter-models.json'), 'utf8'));
-assert.equal(saved.url, 'https://openrouter.ai/api/v1/models');
+assert.equal(saved.url, 'https://openrouter.ai/api/v1/models/user');
 assert.deepEqual(saved.body.data.map((r) => r.id), ['anthropic/claude-x', 'google/gemini-y'], 'the cache keeps only usable rows');
 assert.ok(saved.body.data.every((r) => !('description' in r)), 'without descriptions');
 
@@ -57,9 +57,9 @@ assert.equal(await c.refreshStale(['openrouter']), false);
 assert.equal(calls.length, 0);
 
 // An empty or failed answer never wipes a working list.
-answers['https://openrouter.ai/api/v1/models'] = { body: { data: [] } };
+answers['https://openrouter.ai/api/v1/models/user'] = { body: { data: [] } };
 assert.equal(await c.refresh('openrouter'), false);
-answers['https://openrouter.ai/api/v1/models'] = { ok: false, status: 500 };
+answers['https://openrouter.ai/api/v1/models/user'] = { ok: false, status: 500 };
 assert.equal(await c.refresh('openrouter'), false);
 assert.equal(getModelsForProvider('openrouter').length, 2);
 
@@ -91,6 +91,19 @@ calls.length = 0;
 t += REFRESH_MS;
 await c.refreshStale(['opencode']);
 assert.equal(calls.length, 1, 'stale after six hours');
+
+// The account's own list (/models/user) is asked first; when it isn't answered, the full list is used instead.
+{
+  const d2 = await fs.mkdtemp(path.join(os.tmpdir(), 'roamies-catalogs2-'));
+  setProviderCatalog('openrouter', undefined);
+  answers = { 'https://openrouter.ai/api/v1/models': { body: routerBody }, 'https://openrouter.ai/api/v1/models/user': { ok: false, status: 404 } };
+  calls.length = 0;
+  const c2 = createCatalogs({ auth, dir: d2, fetch: fakeFetch, now: () => t });
+  assert.equal(await c2.refresh('openrouter'), true);
+  assert.deepEqual(calls.map((x) => x.url), ['https://openrouter.ai/api/v1/models/user', 'https://openrouter.ai/api/v1/models']);
+  assert.deepEqual(getModelsForProvider('openrouter').map((m) => m.id), ['anthropic/claude-x', 'google/gemini-y']);
+  await fs.rm(d2, { recursive: true, force: true });
+}
 
 await fs.rm(dir, { recursive: true, force: true });
 console.log('catalogs ok');

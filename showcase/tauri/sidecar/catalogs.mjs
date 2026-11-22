@@ -18,12 +18,15 @@ export function createCatalogs({ auth, dir, fetch: doFetch = (...a) => fetch(...
   const nextRead = new Map(), inFlight = new Map();
   const file = (p) => path.join(dir, `${p}-models.json`);
 
-  // Where the list comes from: OpenRouter's is the key's own endpoint (a custom base URL lists its own models).
+  // Where the list comes from: OpenRouter's is the key's own endpoint (a custom base URL lists its own models). With a
+  // key, /models/user is asked first: it leaves out the models the account's privacy settings, provider preferences and
+  // guardrails rule out. If that isn't answered, the full /models list is used (`plain`).
   async function source(p) {
     if (p !== 'openrouter') return { url: OPENCODE_CATALOG_URLS[p], headers: {} };
     const creds = await auth.getCredentials('openrouter').catch(() => null);
     const base = (creds?.baseUrl ?? OPENROUTER_DEFAULT_BASE_URL).replace(/\/+$/, '');
-    return { url: `${base}/models`, headers: creds?.accessToken ? { Authorization: `Bearer ${creds.accessToken}` } : {} };
+    const keyed = !!creds?.accessToken;
+    return { url: keyed ? `${base}/models/user` : `${base}/models`, plain: `${base}/models`, headers: keyed ? { Authorization: `Bearer ${creds.accessToken}` } : {} };
   }
 
   function install(p, body) {
@@ -46,11 +49,16 @@ export function createCatalogs({ auth, dir, fetch: doFetch = (...a) => fetch(...
   async function read(p) {
     nextRead.set(p, now() + RETRY_MS);
     try {
-      const { url, headers } = await source(p);
-      const res = await doFetch(url, { headers: { Accept: 'application/json', ...headers }, signal: AbortSignal.timeout(timeoutMs) });
-      if (!res.ok) return false;
-      let body = await res.json();
-      if (!parse(p, body).length) return false;
+      const { url, plain, headers } = await source(p);
+      const get = async (u) => {
+        const res = await doFetch(u, { headers: { Accept: 'application/json', ...headers }, signal: AbortSignal.timeout(timeoutMs) });
+        if (!res.ok) return null;
+        const b = await res.json();
+        return parse(p, b).length ? b : null;
+      };
+      let body = await get(url).catch(() => null);
+      if (!body && plain && plain !== url) body = await get(plain);
+      if (!body) return false;
       // OpenRouter's answer is ~1 MB: keep only the rows that can call tools, and only the fields gg-core reads.
       if (p === 'openrouter') {
         const keep = new Set(parse(p, body).map((m) => m.id));

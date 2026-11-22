@@ -1,7 +1,10 @@
-## The AppImage now updates itself
+## The model menu shows only what your key can run
 
-When a newer release is out, Roamies tells you, and **Install and Restart** in its tray menu downloads it, checks its signature, swaps it in for the old AppImage and restarts. You no longer have to download the file yourself. Your settings, keys and memory are kept.
+Before, the Model menu listed every model a provider has, and picking one your key couldn't use failed when you asked something. Now Roamies asks each provider which models your key can actually use and leaves the rest out of the menu.
 
-Releases are now signed with this fork's own key, and each one carries a `latest.json` file that the updater reads. The `.deb` and `.rpm` copies can't replace themselves, so they still open the download page.
+- **OpenRouter:** the list now follows your account's own settings (privacy, provider preferences and guardrails), so models you've ruled out are gone.
+- **OpenAI, Anthropic, Gemini, xAI, DeepSeek and Kimi:** with an API key saved, models the key can't call are hidden.
+- If a provider doesn't answer, or its list looks odd, nothing is hidden and the menu is as it was. If you're signed in with Claude or ChatGPT instead of a key, nothing changes either.
+- If the model you had picked turns out to be one your key can't run, Roamies switches to one it can.
 
-**One manual step this time:** earlier builds don't have this key, so they can't update to this one. Download this AppImage and run it in place of your old one. From the next release on, the update button does it for you.
+The list is checked when you save a key and again every few hours.

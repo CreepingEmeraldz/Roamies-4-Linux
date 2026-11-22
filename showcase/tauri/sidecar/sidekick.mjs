@@ -11,6 +11,7 @@ import { SAFE, checkDrawAction, checkLink, checkMcpCall, checkOpen, checkRead, c
 import { agentsRoot, createAgents, holdAfterLaunch, newsDesk, wantsAgent } from './agents.mjs';
 import { agentEvents, stallWatch } from './agentstream.mjs';
 import { CATALOG_PROVIDERS, createCatalogs } from './catalogs.mjs';
+import { ALLOWED_PROVIDERS, createAllowed } from './allowed.mjs';
 import {
   AUTH_PROVIDERS, AuthStorage, CHATGPT_USAGE_URL, OPENAI_CHATGPT_KEY, apiKeyStorageKeys, claudeCodeEnv, dualAuthProvider, ensureClaudeCodeBinary, getAuthStorageKeys, getContextWindow, getDefaultModel, getModel,
   getModelsForProvider, getSupportedThinkingLevels, loginChatGPT, ollamaServedContext, parseLocalModelId, pointScale, registerRuntimeModels, resolveClaudeCodeBinary, revokeChatGPTSignIn, signInWithClaudeCode,
@@ -391,8 +392,13 @@ const auth = openAuth();
 // OpenRouter's and OpenCode's full model lists (gg-core ships only a few of each), cached next to the sessions.
 const catalogs = createCatalogs({ auth, dir: STORE_DIR });
 // Reads the stale lists of connected providers (or just `only`, right after its key is saved) and updates the menu.
+// Which models each saved API key can run (allowed.mjs): the menu leaves out the rest.
+const allowedModels = createAllowed({ auth, dir: STORE_DIR, models: (p) => getModelsForProvider(p).map((m) => m.id) });
 function refreshCatalogs(only) {
-  const read = only ? catalogs.refresh(only) : catalogs.refreshStale(CATALOG_PROVIDERS.filter((p) => signedIn.get(p)));
+  const keyed = ALLOWED_PROVIDERS.filter((p) => apiKeyStorageKeys(p).some((k) => storedKeys.has(k)));
+  const read = only
+    ? Promise.all([CATALOG_PROVIDERS.includes(only) && catalogs.refresh(only), allowedModels.refresh(only)]).then((r) => r.some(Boolean))
+    : Promise.all([catalogs.refreshStale(CATALOG_PROVIDERS.filter((p) => signedIn.get(p))), allowedModels.refreshStale(keyed)]).then((r) => r.some(Boolean));
   read.then((changed) => {
     if (!changed) return;
     const before = config.model;
@@ -499,10 +505,12 @@ async function removeServer(id) {
   panelNote(`${s.label} is ${s.custom ? 'removed' : 'disconnected'}.`);
 }
 // Some models run on only one kind of key (Kimi K2.8 Preview on a Kimi Code plan key, MiMo UltraSpeed on API Credits).
-const canRun = (p, id) => !!signedIn.get(p) && seesImages(p, id) && getAuthStorageKeys(p, id).some((k) => k === p || storedKeys.has(k));
+// A sign-in (Claude, ChatGPT) runs what its plan runs, so the saved key's list only applies when there is no sign-in.
+const keyAllows = (p, id) => !!oauthOn.get(p) || allowedModels.allows(p, id);
+const canRun = (p, id) => !!signedIn.get(p) && keyAllows(p, id) && seesImages(p, id) && getAuthStorageKeys(p, id).some((k) => k === p || storedKeys.has(k));
 const runnable = (p) => getModelsForProvider(p).filter((m) => canRun(p, m.id));
 // Subagents may run on a model that can't see images: they work from a written brief, and pictures are left out.
-const canRunText = (p, id) => !!signedIn.get(p) && getModelsForProvider(p).some((m) => m.id === id) && getAuthStorageKeys(p, id).some((k) => k === p || storedKeys.has(k));
+const canRunText = (p, id) => !!signedIn.get(p) && keyAllows(p, id) && getModelsForProvider(p).some((m) => m.id === id) && getAuthStorageKeys(p, id).some((k) => k === p || storedKeys.has(k));
 const textOnly = (p) => getModelsForProvider(p).filter((m) => !seesImages(p, m.id) && canRunText(p, m.id));
 function ensureModel() {
   if (config.provider && getModel(config.model) && canRun(config.provider, config.model)) return true;
@@ -1770,7 +1778,7 @@ async function apiKeyLogin(id, given) {
   const baseUrl = variant?.baseUrl ?? meta.apiKeyBaseUrl;
   await auth.setCredentials(variant?.key ?? provider, { accessToken: key.trim(), refreshToken: '', expiresAt: Date.now() + 100 * 365 * 864e5, ...(baseUrl ? { baseUrl } : {}) });
   await refreshAuth(); ensureModel(); agent = null;
-  if (CATALOG_PROVIDERS.includes(provider)) refreshCatalogs(provider);
+  if (CATALOG_PROVIDERS.includes(provider) || ALLOWED_PROVIDERS.includes(provider)) refreshCatalogs(provider);
   // A Gemini key for the AI speaks too, unless the voice has a key of its own.
   if (provider === 'gemini') await syncGeminiVoiceKey();
   menu();
@@ -3033,6 +3041,7 @@ if (oauthOn.get('anthropic')) claudeCode.start();
 // Before ensureModel, so a local model that's picked is still there (and an OpenRouter or OpenCode one).
 if (signedIn.get('local')) await syncLocal();
 await catalogs.load();
+await allowedModels.load();
 ensureModel();
 refreshCatalogs();
 // The first request after launch gets a warm Claude Code too.
