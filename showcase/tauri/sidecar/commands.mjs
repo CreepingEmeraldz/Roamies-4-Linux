@@ -7,7 +7,7 @@ export const MODES = ['smart', 'always', 'never', 'listed'];
 export const SAVED_ASK = ['default', 'always', 'never'];
 const MAX_LIST = 100, MAX_SAVED = 50;
 
-export const DEFAULTS = { mode: 'smart', blocked: [], trusted: [], saved: [] };
+export const DEFAULTS = { mode: 'smart', instant: false, blocked: [], trusted: [], saved: [] };
 
 const text = (v, n) => (typeof v === 'string' ? v.replace(/[\r\n\t]+/g, ' ').trim().slice(0, n) : '');
 const list = (v) => [...new Set((Array.isArray(v) ? v : []).map((x) => text(x, 120)).filter(Boolean))].slice(0, MAX_LIST);
@@ -17,7 +17,7 @@ export function cleanSaved(c) {
   const name = text(c?.name, 40), command = text(c?.command, 500);
   if (!name || !command) return null;
   const phrases = [...new Set((Array.isArray(c?.phrases) ? c.phrases : typeof c?.phrases === 'string' ? c.phrases.split(/[,\n]/) : []).map((p) => text(p, 80)).filter(Boolean))].slice(0, 8);
-  return { id: name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'command', name, phrases, command, ask: SAVED_ASK.includes(c?.ask) ? c.ask : 'default' };
+  return { id: name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'command', name, phrases, command, ask: SAVED_ASK.includes(c?.ask) ? c.ask : 'default', instant: c?.instant !== false };
 }
 
 /** Whatever was stored (or sent from the panel), made safe to use. */
@@ -27,7 +27,7 @@ export function normalize(raw) {
     const s = cleanSaved(c);
     if (s && !seen.has(s.name.toLowerCase()) && saved.length < MAX_SAVED) { seen.add(s.name.toLowerCase()); saved.push(s); }
   }
-  return { mode: MODES.includes(raw?.mode) ? raw.mode : 'smart', blocked: list(raw?.blocked), trusted: list(raw?.trusted), saved };
+  return { mode: MODES.includes(raw?.mode) ? raw.mode : 'smart', instant: raw?.instant === true, blocked: list(raw?.blocked), trusted: list(raw?.trusted), saved };
 }
 
 /** A pattern with * is a wildcard match on the whole command; without one it matches that command and any with arguments after it ("git status" also matches "git status -s"). */
@@ -65,6 +65,19 @@ export function findSaved(saved, name) {
   if (!n) return null;
   const all = Array.isArray(saved) ? saved : [];
   return all.find((c) => c.name.toLowerCase() === n) ?? all.find((c) => c.id === n || c.phrases.some((p) => p.toLowerCase() === n)) ?? null;
+}
+
+// Words only: capitals, punctuation and spacing don't matter ("Next window." is "next window").
+export const words = (t) => String(t ?? '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+
+/**
+ * The saved command a message IS (when instant commands are on): the whole message has to be its name or one of its
+ * phrases, so "put it next window, not this window" is not "next window". null for anything else.
+ */
+export function instantMatch(policy, text) {
+  const p = normalize(policy), w = words(text);
+  if (!p.instant || !w) return null;
+  return p.saved.find((c) => c.instant && [c.name, ...c.phrases].some((x) => words(x) === w)) ?? null;
 }
 
 /** The prompt's line about saved commands ('' when there are none). */

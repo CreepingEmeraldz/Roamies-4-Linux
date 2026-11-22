@@ -16,7 +16,7 @@
   let state = null, tab = 'home', deferred = false;
   // What's open in the panel itself: a key field (provider id, 'fish' or 'gemini'), the row action waiting for its
   // Confirm, each long list's page (pg) and how many rows fit on one (per, measured), Memory's tab and its search.
-  const ui = { key: null, kind: {}, arm: null, add: { label: '', url: '', key: '', images: false }, addSent: null, pg: {}, per: {}, base: {}, rec: null, mtab: 'facts', tabs: {}, q: '', bindShown: new Set(), cmd: { edit: null, name: '', phrases: '', command: '', ask: 'default', blockIn: '', trustIn: '' } };
+  const ui = { key: null, kind: {}, arm: null, add: { label: '', url: '', key: '', images: false }, addSent: null, pg: {}, per: {}, base: {}, rec: null, mtab: 'facts', tabs: {}, q: '', bindShown: new Set(), cmd: { edit: null, name: '', phrases: '', command: '', ask: 'default', instant: 'on', blockIn: '', trustIn: '' } };
   let armTimer = 0;
   const disarm = () => { clearTimeout(armTimer); if (ui.arm) { ui.arm = null; return true; } return false; };
 
@@ -981,7 +981,7 @@
     listed: "I run the commands on your list without asking, and ask before everything else.",
   };
   function commandsPage() {
-    const c = state.commands ?? { mode: 'smart', blocked: [], trusted: [], saved: [] };
+    const c = state.commands ?? { mode: 'smart', instant: false, blocked: [], trusted: [], saved: [] };
     const q = ui.cmd;
     const send1 = (op, extra = {}) => send({ type: 'panel_cmd', op, ...extra });
     const field = (id, label, prop, o = {}) => el('span', { className: 'px field' }, el('input', {
@@ -1000,7 +1000,7 @@
       const save = () => {
         if (!q.name.trim()) return $('cmd-name')?.focus();
         if (!q.command.trim()) return $('cmd-command')?.focus();
-        send1('save', { editId: q.edit === 'new' ? '' : q.edit, cmd: { name: q.name, phrases: q.phrases, command: q.command, ask: q.ask } });
+        send1('save', { editId: q.edit === 'new' ? '' : q.edit, cmd: { name: q.name, phrases: q.phrases, command: q.command, ask: q.ask, instant: q.instant !== 'off' } });
         q.edit = null; render('cmd-new');
       };
       return el('div', { className: 'addserver' },
@@ -1008,19 +1008,21 @@
         field('cmd-phrases', 'Things you might say', 'phrases', { placeholder: 'What you say, separated by commas: next window, move right', max: 300, enter: save }),
         field('cmd-command', 'Command', 'command', { placeholder: 'Command, e.g. niri msg action focus-column-right', max: 500, enter: save }),
         picks('Ask before running it', [['default', 'Like the rest'], ['always', 'Always ask'], ['never', 'Never ask']], q.ask, (v) => { q.ask = v; render(`cmdask:${v}`); }, 'cmdask'),
+        picks('Instant command', [['on', 'Can run instantly'], ['off', 'Always ask the AI']], q.instant, (v) => { q.instant = v; render(`cmdinst:${v}`); }, 'cmdinst'),
         el('div', { className: 'row-btns' }, btn('Save', save, { k: 'cmd-save' }), link('Cancel', () => { q.edit = null; render('cmd-new'); }, { k: 'cmd-cancel' })));
     };
-    const open = (x) => { q.edit = x ? x.id : 'new'; q.name = x?.name ?? ''; q.phrases = x?.phrases.join(', ') ?? ''; q.command = x?.command ?? ''; q.ask = x?.ask ?? 'default'; render('cmd-name'); };
+    const open = (x) => { q.edit = x ? x.id : 'new'; q.name = x?.name ?? ''; q.phrases = x?.phrases.join(', ') ?? ''; q.command = x?.command ?? ''; q.ask = x?.ask ?? 'default'; q.instant = x?.instant === false ? 'off' : 'on'; render('cmd-name'); };
     return [
       group('Commands', 'Whether I ask before running a command.', null,
         !state.actions ? el('div', { className: 'setting' }, el('span', {}, 'Commands are off', el('small', { textContent: 'Turn on file edits and commands to let me run them.' })), link('Turn on', () => act('actions'), { k: 'cmd-on' })) : null,
         picks('Ask before running a command', CMD_MODES, c.mode, (v) => send1('mode', { value: v }), 'cmdmode', CMD_TIPS)),
+      toggle('Instant commands', 'When a message is exactly a command\'s name or phrase ("next window"), run it straight away without asking the AI. Anything extra in the message and I read it as usual.', c.instant, () => send1('instant', { value: !c.instant }), 'cmdinstant'),
       c.mode === 'listed' ? patterns('Run without asking', 'Commands that never need a yes. "git status" also covers "git status -s", and * stands for anything: niri msg *', c.trusted, 'trusted', 'trustIn', 'Command, e.g. git status') : null,
       patterns('Never run', 'Kinds of command I refuse, whatever else is set. Built-in safety rules always apply as well.', c.blocked, 'blocked', 'blockIn', 'Command, e.g. sudo or rm -rf *'),
       group('My commands', 'Name a command and say it any time: "next window" can run niri msg action focus-column-right.', c.saved.length || null,
         c.saved.map((x) => el('div', { className: 'setting' },
           el('span', {}, x.name, el('small', { textContent: `${x.command}${x.phrases.length ? ` · ${x.phrases.join(', ')}` : ''}`, className: 'wrap' })),
-          el('span', { className: 'row-btns' }, link('Edit', () => open(x), { k: `cmd-edit:${x.id}`, aria: `Edit ${x.name}` }), link('Delete', () => send1('delete', { id: x.id }), { k: `cmd-del:${x.id}`, danger: true, aria: `Delete ${x.name}` })))),
+          el('span', { className: 'row-btns' }, link('Test', () => send1('test', { id: x.id }), { k: `cmd-test:${x.id}`, aria: `Test ${x.name}` }), link('Edit', () => open(x), { k: `cmd-edit:${x.id}`, aria: `Edit ${x.name}` }), link('Delete', () => send1('delete', { id: x.id }), { k: `cmd-del:${x.id}`, danger: true, aria: `Delete ${x.name}` })))),
         editing ? edit() : el('div', { className: 'setting' }, el('span', {}), link('Add a command', () => open(null), { k: 'cmd-new' }))),
     ];
   }

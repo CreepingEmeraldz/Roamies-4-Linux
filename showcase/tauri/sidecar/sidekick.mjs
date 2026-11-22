@@ -8,7 +8,7 @@ import { CONFIG_PATH, DATA_DIR, ROAMIES_DIR } from './datadir.mjs';
 import { Agent } from '@kenkaiiii/gg-agent';
 import { ClaudeCodeAgent, claudeCodeInstaller, closeSpare } from './claudecode.mjs';
 import { SAFE, BLOCK, checkDrawAction, checkLink, checkMcpCall, checkOpen, checkRead, checkWrite, classifyCommand, isYes, redactArgs } from './safety.mjs';
-import { MODES, cleanSaved, normalize as normalizeCommands, savedLine } from './commands.mjs';
+import { MODES, cleanSaved, instantMatch, normalize as normalizeCommands, savedLine } from './commands.mjs';
 import { agentsRoot, createAgents, holdAfterLaunch, newsDesk, wantsAgent } from './agents.mjs';
 import { agentEvents, stallWatch } from './agentstream.mjs';
 import { CATALOG_PROVIDERS, createCatalogs } from './catalogs.mjs';
@@ -1030,8 +1030,30 @@ let credsBaseUrl;
 
 // One run at a time: a new request waits for (or interrupts) the current one. Folding waits until none is left.
 let queued = 0;
+// A saved command run directly (the Test button, or an instant command), as Roamies would: the same blocks and asks apply.
+async function runSavedNow(c) {
+  const tool = tools.find((t) => t.name === 'run_saved_command');
+  try {
+    const out = await tool.execute({ name: c.name }, { signal: new AbortController().signal });
+    logLine('saved_command', { name: c.name, ok: true });
+    return { ok: true, text: String(typeof out === 'string' ? out : out?.content?.[0]?.text ?? '').slice(0, 400) };
+  } catch (e) {
+    logLine('saved_command', { name: c.name, ok: false });
+    return { ok: false, text: String(e?.message ?? e).slice(0, 400) };
+  }
+}
+const ranIt = (c, r) => { say(r.ok ? `Ran: ${c.name} ✓` : `${c.name} didn't run: ${r.text.split('\n')[0]}`, r.ok ? 'happy' : 'concerned'); };
+
 function enqueue(text, { interrupt = false, image = null, note = '', byVoice = false, listenAfter = false, news = null } = {}) {
   rateWaiting?.abort('new'); // a new request ends a rate-limit wait
+  // Instant commands (off unless switched on): a message that IS a saved command's name or phrase runs it, no AI.
+  const hit = config.allowActions && !image && !note ? instantMatch(commandPolicy(), text) : null;
+  if (hit) {
+    queued++;
+    running = running.then(async () => { ranIt(hit, await runSavedNow(hit)); }).catch((e) => console.error('instant', e))
+      .finally(() => { if (--queued === 0) maybeCompact(); });
+    return running;
+  }
   if (interrupt && busy) interruptQuietly('new request');
   queued++;
   running = running.then(() => prompt(text, image, note, byVoice, news, listenAfter)).catch((e) => console.error('prompt', e))
@@ -2996,7 +3018,15 @@ createInterface({ input: process.stdin }).on('line', (line) => {
     if (m.op === 'mode' && MODES.includes(m.value)) next = { ...cur, mode: m.value };
     else if (m.op === 'add' && list && typeof m.pattern === 'string' && m.pattern.trim()) next = { ...cur, [list]: [...cur[list], m.pattern] };
     else if (m.op === 'remove' && list && Number.isInteger(m.index)) next = { ...cur, [list]: cur[list].filter((_, i) => i !== m.index) };
-    else if (m.op === 'delete' && typeof m.id === 'string') next = { ...cur, saved: cur.saved.filter((c) => c.id !== m.id) };
+    else if (m.op === 'instant' && typeof m.value === 'boolean') next = { ...cur, instant: m.value };
+    else if (m.op === 'saved_instant' && typeof m.id === 'string' && typeof m.value === 'boolean') next = { ...cur, saved: cur.saved.map((c) => (c.id === m.id ? { ...c, instant: m.value } : c)) };
+    else if (m.op === 'test' && typeof m.id === 'string') {
+      const c = cur.saved.find((x) => x.id === m.id);
+      if (!c) return;
+      if (!config.allowActions) { panelNote('Turn on "Allow File Edits & Commands" on the General page first.', true); return; }
+      runSavedNow(c).then((r) => panelNote(r.ok ? `${c.name}: ${r.text}` : `${c.name} didn't run. ${r.text}`, !r.ok));
+      return;
+    } else if (m.op === 'delete' && typeof m.id === 'string') next = { ...cur, saved: cur.saved.filter((c) => c.id !== m.id) };
     else if (m.op === 'save') {
       const c = cleanSaved(m.cmd);
       const v = c && classifyCommand(c.command, HOME, { exists: existsSync });

@@ -1,7 +1,4 @@
-## The rate-limit notice counts down and lets you carry on
-
-The "rate limiting me" notice now counts down ("Trying again in 45s", then 44s, and so on) instead of showing the full wait. It also no longer takes over your keyboard, so you can keep typing in other windows while it waits. The Cancel button still works.
-
-## A fix for stray pixels left on screen
-
-Stray bits of a closed bubble could stay on screen until something redrew that spot, and they went away while Roamie moved and came back when it stopped. After any change, Roamie now keeps redrawing for a few more frames so every screen buffer gets the new picture, then redraws once a second as a safety net.
+- **Commands: Test button.** Each saved command has a Test link that runs it the way Roamies would (blocked commands stay blocked, and your ask settings apply), and shows what happened.
+- **Instant commands (off by default).** Switch it on in Commands and a message that is exactly a command's name or phrase ("next window") runs straight away with no AI wait, good for voice. A sentence that merely contains the phrase is read normally. Each command can opt out.
+- **Quick confirmation.** Instant commands say "Ran: Next window ✓", or why they didn't.
+- A command that succeeds silently now says so, so the AI no longer thinks it failed.
