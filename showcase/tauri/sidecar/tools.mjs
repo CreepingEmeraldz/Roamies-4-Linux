@@ -359,7 +359,8 @@ export function createTools({ allowActions, ui, ask, openUrl, onCommitments, foc
     }
     const [sh, shArgs, shOpts] = shellFor(command);
     const r = await run(sh, shArgs, { ...shOpts, cwd: workdir, env: { ...process.env, ...GIT_SAFE } });
-    const out = clip((r.stdout + (r.stderr ? `\n[stderr]\n${r.stderr}` : '')).trim() || '(no output)', 12_000);
+    // Many commands succeed silently (niri msg action, mv, cp): say so, or an empty answer reads as "it didn't work".
+    const out = clip((r.stdout + (r.stderr ? `\n[stderr]\n${r.stderr}` : '')).trim() || 'Done: it exited normally (code 0) and printed nothing, which is usual for commands that act on something. The effect (a window moving, a file copied) is not in the output.', 12_000);
     if (r.err && r.err.code !== 0) throw new Error(`Exit ${r.err.code ?? r.err.signal}\n${out}`);
     return out;
   }
