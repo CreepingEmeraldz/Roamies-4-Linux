@@ -295,6 +295,7 @@ assert.match(agentSystem('maker', { dir: '/x', returns: 'answer' }), /report is 
   fs.writeFileSync(path.join(a.dir, 'files', 'index.html'), '<h1>Woof</h1>');
   const result = checkFinish({ outcome: 'Made a one-page site for Woof Co.', files: [{ path: 'files/index.html', what: 'the page' }] }, { dir: a.dir }).result;
   c.emit('message', { t: 'finish', result }); c.emit('message', { t: 'end', ok: true }); c.emit('close', 0, null); await tick();
+  await until(() => lastOf('done')); // a fixed tick isn't always enough on a slow runner
   assert.equal(mgr.get(a.id).state, 'done', mgr.get(a.id).reason);
   assert.equal(lastOf('done').agent.result.files[0].name, 'index.html');
   assert.equal(mgr.get(a.id).workMs, 60_000, 'only the minute of work counts, not the wait');
