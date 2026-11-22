@@ -1,7 +1,7 @@
 # Linux-only release for this fork: tag a version (e.g. `git tag v0.1.44-linux1 && git push origin v0.1.44-linux1`) or
 # run it by hand from the Actions tab (it then builds the version in tauri.conf.json and tags it v<version>-linux.N, N counting up).
-# Builds the AppImage (plus .deb and .rpm) unsigned and attaches them to a published GitHub release.
-# No Apple, Windows or updater-signing secrets are needed: update bundles are switched off for this build.
+# Builds the AppImage (plus .deb and .rpm) and attaches them to a published GitHub release, with latest.json so an
+# AppImage can update itself. Needs the TAURI_SIGNING_PRIVATE_KEY and TAURI_SIGNING_PRIVATE_KEY_PASSWORD secrets.
 name: Release (Linux)
 
 on:
@@ -81,11 +81,14 @@ jobs:
           echo "TAG=$TAG" >> "$GITHUB_ENV"
           echo "ROAMIES_BUILD=${TAG#v}" >> "$GITHUB_ENV"
 
-      # createUpdaterArtifacts is switched off: it needs the upstream project's private signing key, which a fork doesn't have.
+      # The build is signed with this fork's own key (the TAURI_SIGNING_* secrets) so an AppImage can update itself. The
+      # app's version is set to the full release number, so it can tell when a newer one is out.
       - name: Build
         env:
           TAURI_BUNDLES: appimage,deb,rpm
-        run: ./build.sh release --target x86_64-unknown-linux-gnu --config '{"bundle":{"createUpdaterArtifacts":false}}'
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: ./build.sh release --target x86_64-unknown-linux-gnu --config "{\"version\":\"${TAG#v}\"}"
 
       # Each release keeps its number in its file names, and the newest is marked as the latest.
       - name: Publish the release
@@ -99,9 +102,20 @@ jobs:
           cp $B/appimage/*.AppImage "out/Roamies_${LABEL}_amd64.AppImage"
           cp $B/deb/*.deb "out/Roamies_${LABEL}_amd64.deb"
           cp $B/rpm/*.rpm "out/Roamies-${LABEL}.x86_64.rpm"
+          cp $B/appimage/*.AppImage.sig "out/Roamies_${LABEL}_amd64.AppImage.sig"
           ls -la out
           PREV="$(gh release list -R "$GITHUB_REPOSITORY" --limit 1 --json tagName -q '.[0].tagName' || true)"
           { cat "$GITHUB_WORKSPACE/.github/release-notes.md"; echo; echo "**Full Changelog**: https://github.com/$GITHUB_REPOSITORY/compare/${PREV:-$TAG}...$TAG"; } > notes.md
           gh release create "$TAG" -R "$GITHUB_REPOSITORY" --title "Roamies $LABEL" --latest \
             --notes-file notes.md --target "$GITHUB_SHA"
           gh release upload "$TAG" -R "$GITHUB_REPOSITORY" --clobber out/*
+          # The feed the app's updater reads (the newest release's copy is at releases/latest/download/latest.json).
+          SIG="$(cat "out/Roamies_${LABEL}_amd64.AppImage.sig")" LABEL="$LABEL" TAG="$TAG" REPO="$GITHUB_REPOSITORY" node -e '
+            const e = process.env;
+            const url = `https://github.com/${e.REPO}/releases/download/${e.TAG}/Roamies_${e.LABEL}_amd64.AppImage`;
+            const p = { signature: e.SIG, url };
+            const notes = require("fs").readFileSync("notes.md", "utf8");
+            require("fs").writeFileSync("latest.json", JSON.stringify({ version: e.LABEL, notes, pub_date: new Date().toISOString(),
+              platforms: { "linux-x86_64": p, "linux-x86_64-appimage": p } }, null, 2));
+          '
+          gh release upload "$TAG" -R "$GITHUB_REPOSITORY" --clobber latest.json

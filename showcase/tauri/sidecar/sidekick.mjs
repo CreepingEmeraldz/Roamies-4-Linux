@@ -1976,13 +1976,15 @@ function setLogin(on) { login.asked = true; send({ type: 'login_item', on }); }
 // The app checks the signed feed and installs (Rust: update()); this side decides what to say and offers the menu item.
 // page: this copy can't replace itself (Linux, installed from a .deb or .rpm), so "install" opens the download page.
 const update = { available: null, told: null, manual: false, installing: false, checking: false, result: null, page: false, done: null };
-// This fork's Linux builds carry no update signature, so they only look at the fork's newest release and say when it is
-// newer than this build (BUILD, set when the app is built: 0.1.46-linux.3); installing opens the download page.
+// An AppImage on Linux updates itself like the other systems (the fork signs its releases). A copy from a .deb or .rpm
+// can't replace itself, so it only looks at the fork's newest release and says when it is newer than this build (BUILD,
+// set when the app is built: 0.1.46-linux.3); installing opens the download page.
+const SELF_UPDATE = LINUX && !!process.env.APPIMAGE;
 const BUILD = typeof __ROAMIES_BUILD__ === 'string' ? __ROAMIES_BUILD__ : '';
 function checkUpdates(manual = false) {
   update.manual = manual;
   if (manual) { update.checking = true; update.result = null; panel(); }
-  if (LINUX) {
+  if (LINUX && !SELF_UPDATE) {
     checkFork(UPDATE_REPO, BUILD || VERSION)
       .then((r) => onUpdateStatus({ ...r, page: true }), (e) => onUpdateStatus({ state: 'error', error: String(e?.message ?? e) }))
       .catch((e) => console.error('update check', e));
@@ -1993,7 +1995,7 @@ function checkUpdates(manual = false) {
 function installUpdate() {
   if (update.installing) return;
   update.installing = true; menu();
-  send({ type: 'update', install: true, ...(LINUX && update.available ? { version: update.available } : {}) });
+  send({ type: 'update', install: true, ...(LINUX && !SELF_UPDATE && update.available ? { version: update.available } : {}) });
 }
 function onUpdateStatus(m) {
   logLine('update_status', { state: String(m.state ?? ''), ...(m.version ? { version: String(m.version) } : {}), manual: !!update.manual });

@@ -37,7 +37,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEQ0MEI0NTJGMEY1NkNGNUYKUldSZnoxWVBMMFVMMUlXK2ROU3YyaDJVZy9scW56d081dEZwelE0SFBQeFVSVXRVYnZyY3BSd0cK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDY2NkY3NkY2M0NCREFGMTMKUldRVHI3MDg5blp2WnR5Yi9FSjNhNVM1TGxOcTNmOUhmK0poRnh0SlMzeGU3Qks3N3kvcFI3aDIK",
       "endpoints": [
         "https://github.com/CreepingEmeraldz/Roamies-4-Linux/releases/latest/download/latest.json",
         "https://raw.githubusercontent.com/CreepingEmeraldz/Roamies-4-Linux/updates/latest.json"

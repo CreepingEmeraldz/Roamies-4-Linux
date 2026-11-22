@@ -41,7 +41,7 @@ tried. GNOME and KDE use upstream's path (see below). Bug reports with your comp
 | Read windows (controls and text) | Yes                          | Yes, read only, over the accessibility bus (see below)        |
 | Click and type in other apps     | Yes                          | By label, over the accessibility bus (keys need wtype)        |
 | Shortcuts                        | Global keys                  | Keys you bind in your compositor (X11 sessions get real ones) |
-| Updates itself                   | Yes                          | No: download the new AppImage from Releases                   |
+| Updates itself                   | Yes                          | AppImage: yes. `.deb` and `.rpm`: opens the Releases page     |
 
 ### Why the Roamie can't follow the cursor everywhere on Wayland
 
@@ -72,14 +72,14 @@ clicking at pixels in other apps: `read_window` already shows the whole page. De
 2. Put the AppImage somewhere permanent (for example `~/Roamies/Roamies.AppImage`) and `chmod +x` it.
    AppImages need FUSE 2 (`libfuse2` or `libfuse2t64`).
 3. Run it once. It writes `~/.local/bin/roamies-ctl` and the setup guide opens.
-4. To update, download the new AppImage over the old one. Your settings, keys and memory are in `~/.gg` and are kept.
+4. To update, use Install and Restart in the tray menu when Roamies says a new release is out (it can also be done by hand: download the new AppImage over the old one). Your settings, keys and memory are in `~/.gg` and are kept.
 
 For drawings that land on the right words, install tesseract (`sudo apt install tesseract-ocr`, or `doas apt install tesseract-ocr`).
 Roamies reads the screenshot with it to find a button's or link's exact box, as the macOS and Windows helpers do, instead of
 trusting the model's guess at pixel positions. Without it, drawings still work but are only as exact as the model's guess.
 
-Needs glibc 2.38 or newer (Ubuntu 24.04, Fedora 39, Debian 13 or newer). The builds aren't signed, so the in-app updater
-has nothing to install: it looks at this repo's releases, not upstream's.
+Needs glibc 2.38 or newer (Ubuntu 24.04, Fedora 39, Debian 13 or newer). Releases are signed with this fork's own key, so the
+in-app updater installs from this repo's releases, not upstream's.
 
 ## Bind your keys
 

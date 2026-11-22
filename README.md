@@ -109,7 +109,7 @@ quizzes you answer with a click.
 | Show or hide           | ⌃⌥S                        | Ctrl+Shift+S                | Ctrl+Alt+S, or a key you bind\*    |
 | Talk shortcut          | Hold ⌃⌥                    | Hold Ctrl+Alt               | Hold Ctrl+Alt, or a key you bind\* |
 | Type shortcut          | Tap ⌥⌘                     | Tap Ctrl+Shift              | Tap Ctrl+Shift, or a key you bind\* |
-| Updates itself         | Yes                        | Yes                         | No in this fork: download the new AppImage |
+| Updates itself         | Yes                        | Yes                         | AppImage yes; `.deb`/`.rpm` open the download page |
 
 <sub>\* On Wayland (the default on Ubuntu, Fedora and KDE), apps can't grab keys, so you bind Roamies' commands to keys
 in your desktop's keyboard settings. [Linux (beta)](#linux-beta) shows how.</sub>
