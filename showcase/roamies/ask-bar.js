@@ -57,11 +57,38 @@
 
   let el = null, ta = null, on = false, draft = '', pick = false, at = [0, 0], size = [320, 38], cursor = null, openedAt = 0, cb = {};
   const bounds = () => { const S = R.safe ?? { top: 0, right: 0, bottom: 0, left: 0 }; return { l: S.left + 8, t: S.top + 8, r: innerWidth - S.right - 8, b: innerHeight - S.bottom - 8 }; };
-  const put = (p) => { at = p; el.style.transform = `translate(${p[0]}px, ${p[1]}px)`; };
+  // pos is where it is while gliding (fractions of a pixel); at is what's drawn, in whole pixels so the text stays crisp.
+  let pos = [0, 0], vel = [0, 0], goal = null, raf = 0, last = 0;
+  const put = (p) => { at = p; pos = p.slice(); vel = [0, 0]; goal = null; el.style.transform = `translate(${p[0]}px, ${p[1]}px)`; };
+  // Follows the cursor through the same stiff, critically damped spring Roamie does (agent.js, FOLLOW_W), so the two
+  // move alike instead of the field jumping to every sample. A long way off (first placement, a flip across the screen)
+  // it just goes there.
+  const GLIDE_W = 90;
+  const step = (now) => {
+    raf = 0;
+    if (!on || !goal) return;
+    // The cursor is on it (reaching to click): hold still.
+    if (held()) { goal = null; vel = [0, 0]; return; }
+    const dt = Math.min(0.05, Math.max(0.001, (now - last) / 1000)); last = now;
+    const e = Math.exp(-GLIDE_W * dt);
+    for (let i = 0; i < 2; i++) {
+      const sx = pos[i] - goal[i], tv = (vel[i] + GLIDE_W * sx) * dt;
+      vel[i] = (vel[i] - GLIDE_W * tv) * e; pos[i] = goal[i] + (sx + tv) * e;
+    }
+    if (Math.hypot(pos[0] - goal[0], pos[1] - goal[1]) < 0.4 && Math.hypot(vel[0], vel[1]) < 4) { put(goal); return; }
+    at = [Math.round(pos[0]), Math.round(pos[1])];
+    el.style.transform = `translate(${at[0]}px, ${at[1]}px)`;
+    raf = requestAnimationFrame(step);
+  };
+  const glide = (p) => {
+    if (at[0] < -1e4 || Math.hypot(p[0] - pos[0], p[1] - pos[1]) > 400) { put(p); return; }
+    goal = p;
+    if (!raf) { last = performance.now(); raf = requestAnimationFrame(step); }
+  };
   const over = (x, y) => x >= at[0] && x <= at[0] + size[0] && y >= at[1] && y <= at[1] + size[1];
   // It holds still while the cursor is on it (so it can be clicked); else it's beside the cursor.
   const held = () => !cursor || over(cursor[0], cursor[1]);
-  const follow = () => { if (!held()) put(R.askBarPlace(cursor, size, bounds(), R.followSide?.() ?? 0)); };
+  const follow = () => { if (!held()) glide(R.askBarPlace(cursor, size, bounds(), R.followSide?.() ?? 0)); };
   // One line, growing to five as you type (then it scrolls).
   const fit = () => {
     ta.style.height = `${LINE}px`;
