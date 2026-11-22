@@ -625,7 +625,7 @@
     canvas.addEventListener('pointerup', release);
     canvas.addEventListener('pointercancel', () => { if (down) down.o.c.mover.dragging = false; down = null; });
 
-    let last = performance.now(), skip = false, blank = false, nap = 0, lastSig = '';
+    let last = performance.now(), skip = false, blank = false, nap = 0, lastSig = '', settle = 0, forced = 0;
     // Linux: after 15 s with nothing happening (no message from the app, no pointer movement, no drag) the loop ticks once
     // a second instead of every frame: a resting Roamie costs next to nothing. Any message from the app wakes it at once.
     R.lastActive = performance.now();
@@ -697,8 +697,16 @@
       const at = `${vx},${vy},${cw},${ch}`, shown = place(U, dt);
       // Same picture in the same place as last frame (resting, nothing moving): leave the canvas alone, so the
       // page has nothing to repaint. NaN never matches, so anything unfingerprinted always redraws.
-      const same = shown && !sig.includes('NaN') && sig === lastSig && at === `${vx},${vy},${cw},${ch}`;
+      let same = shown && !sig.includes('NaN') && sig === lastSig && at === `${vx},${vy},${cw},${ch}`;
       lastSig = shown ? sig : '';
+      // GPU painting on a layer-shell overlay keeps a few buffers, and a page that stops painting leaves the older ones
+      // holding an earlier picture (stray bits of a closed bubble that stay until something redraws there). So after a
+      // change it keeps drawing for a few more frames to reach all of them, then redraws once a second as a safety net.
+      if (window.ROAMIE_FULLPAINT) {
+        if (!same) settle = 8;
+        else if (settle > 0) { settle--; same = false; }
+        else if (now - forced > 1000) { forced = now; same = false; }
+      }
       if (shown && !same) {
         ctx.setTransform(1, 0, 0, 1, 0, 0);
         ctx.clearRect(0, 0, canvas.width, canvas.height);

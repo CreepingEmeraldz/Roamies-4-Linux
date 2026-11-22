@@ -1058,6 +1058,8 @@
             return this;
           },
           focus(on) { bb.input.focused = on; bb.input.caretAt = now; return this; },
+          // New wording for a prompt that's waiting on something (a countdown).
+          retext(text) { if (b === bb) bb.input.placeholder = text; return this; },
           close() { if (b === bb) close(bb); },
           get closed() { return h.closed; },
         };

@@ -216,6 +216,19 @@
     if (choices) { ask.label = field.getAttribute('aria-label'); field.setAttribute('aria-label', `${question} Press Y to allow or N to decline.`); }
     focusField();
   };
+  // A notice with a button that lets you carry on meanwhile (a rate limit being waited out): unlike an ask it doesn't take the
+  // keyboard, so typing somewhere else still works. The sidecar sends the wording again each second for the countdown.
+  let wait = null;
+  const openWait = (m) => {
+    const a = getAgent();
+    if (!a) return;
+    if (wait?.id === m.id) { if (!wait.h.closed) wait.h.retext(m.text); return; }
+    wait?.h.close();
+    const id = m.id;
+    const h = a.prompt({ placeholder: m.text, choices: [m.button || 'Cancel'], onChoose: () => { wait = null; h.close(); send({ type: 'answer', id, text: 'cancel' }); } });
+    wait = { id, h };
+  };
+  const closeWait = (m) => { if (wait?.id === m.id) { wait.h.close(); wait = null; } };
   // The bubble draws the caret where the field has it, so moving back to fix a word shows where typing goes.
   const syncField = () => ask && !ask.bar && !ask.choices && ask.h.set(field.value, field.selectionDirection === 'backward' ? field.selectionStart : field.selectionEnd);
   field.addEventListener('input', syncField);
@@ -643,6 +656,8 @@
     }
     if (m.kind === 'say') { if (!ask || ask.bar) { if (capR()) N().say(m.text); else getAgent().say(m.text, { mood: m.mood ?? null }); } } // the field leaves the bubble free
     else if (m.kind === 'ask') openAsk(m);
+    else if (m.kind === 'wait') openWait(m);
+    else if (m.kind === 'wait_end') closeWait(m);
     else if (m.kind === 'cancel_ask') { if (ask?.id === m.id) { ask.id = null; finishAsk(null); } }
     else if (m.kind === 'agent') onAgent(m.e);
     else if (m.kind === 'voice') onVoice(m);

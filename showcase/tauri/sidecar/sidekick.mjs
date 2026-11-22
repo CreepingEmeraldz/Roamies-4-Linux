@@ -1699,13 +1699,20 @@ async function waitAndRetry(r) {
   rateWaiting?.abort('new');
   const ctrl = new AbortController();
   rateWaiting = ctrl;
-  const secs = Math.round(r.ms / 1000);
-  const when = secs >= 100 ? `${Math.round(secs / 60)} minutes` : secs >= 50 ? 'a minute' : `${secs} seconds`;
+  // A notice with a Cancel button that counts down. It doesn't take the keyboard (unlike an ask), so the user carries on
+  // with whatever they were doing while it waits.
+  const id = `w${++askSeq}`, end = Date.now() + r.ms;
+  const left = () => { const s = Math.max(0, Math.ceil((end - Date.now()) / 1000)); return s >= 60 ? `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, '0')}s` : `${s}s`; };
+  const notice = () => ({ kind: 'wait', id, text: `${r.who} is rate limiting me. Trying again in ${left()}.`, button: 'Cancel' });
+  pending.set(id, () => ctrl.abort('cancel'));
+  ui(notice());
+  const tick = setInterval(() => ui(notice()), 1000);
   const timer = setTimeout(() => ctrl.abort('time'), r.ms);
   logLine('rate_wait', { provider: config.provider, ms: r.ms, tries: r.tries });
-  await ask({ prompt: `${r.who} is rate limiting me. I'll try again in ${when}.`, choices: ['Cancel'] }, ctrl.signal);
-  clearTimeout(timer);
-  const timedOut = ctrl.signal.aborted && ctrl.signal.reason === 'time';
+  await new Promise((done) => ctrl.signal.addEventListener('abort', done, { once: true }));
+  clearTimeout(timer); clearInterval(tick); pending.delete(id);
+  ui({ kind: 'wait_end', id });
+  const timedOut = ctrl.signal.reason === 'time';
   if (rateWaiting === ctrl) rateWaiting = null;
   if (!timedOut) { rateRetryFor = null; if (ctrl.signal.reason !== 'new') say("Okay, I won't retry that.", 'happy'); return; }
   if (busy || queued) return;
