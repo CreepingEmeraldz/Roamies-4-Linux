@@ -600,7 +600,12 @@
       // lifetime
       if (bb.closing) { bb.closing += dt; return; }
       if (done) {
-        if (!bb.hover && !bb.expanded && !R.voiceOut?.playing()) bb.dwell += dt;
+        // A reply too long for its bubble opens out to its full height once it's all been said, from its first line, so
+        // it can be read without scrolling (a click folds it back). Opened that way it still closes after its time.
+        if (bb.kind === 'speech' && bb.overflow && !bb.expanded && !bb.autoOpened && !bb.input) {
+          bb.autoOpened = true; bb.expanded = true; bb.auto = true; bb.follow = false; bb.scrollTarget = 0; bb.dwell = 0;
+        }
+        if (!bb.hover && (!bb.expanded || bb.auto) && !R.voiceOut?.playing()) bb.dwell += dt;
         // Long enough to read, about 200 words a minute (#143: capped at 4.5 s, long replies closed mid-read).
         // A long one (it scrolls) gets up to 90 s, and the clock only runs while the pointer is off it.
         const linger = clamp(1.1 + bb.text.split(/\s+/).filter(Boolean).length / 3.3, 1.3, bb.overflow ? 90 : 30);
@@ -1109,7 +1114,7 @@
           return;
         }
         if (b.input) { b.input.onPress?.(); return; }
-        if (b.overflow || b.expanded) { b.expanded = !b.expanded; b.follow = false; b.dwell = 0; k.S('expand'); if (!b.expanded) b.scrollTarget = 0; }
+        if (b.overflow || b.expanded) { b.auto = false; b.expanded = !b.expanded; b.follow = false; b.dwell = 0; k.S('expand'); if (!b.expanded) b.scrollTarget = 0; }
         else close(b);
       },
       wheel: (dy) => {
