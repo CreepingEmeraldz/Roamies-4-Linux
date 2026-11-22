@@ -42,6 +42,6 @@ await draw.execute({ beats: beats.slice(0, 2) }, { toolCallId: 'plain1' });
 assert.ok(events.every((e) => !('deep' in e)), 'ordinary drawings are unchanged');
 // Regression (#143): a reply bubble closed after at most 4.5 s however long it was; it now stays for its reading time.
 const bubble = readFileSync(new URL('../../../roamies/agent.js', import.meta.url), 'utf8');
-assert.match(bubble, /const linger = clamp\(1\.1 \+ bb\.text\.split\(\/\\s\+\/\)\.filter\(Boolean\)\.length \/ 3\.3, 1\.3, 30\);/, 'bubbles stay for their reading time');
+assert.match(bubble, /const linger = clamp\(1\.1 \+ bb\.text\.split\(\/\\s\+\/\)\.filter\(Boolean\)\.length \/ 3\.3, 1\.3, bb\.overflow \? 90 : 30\);/, 'bubbles stay for their reading time');
 console.log('deep explain tests: passed');
 process.exit(0);
