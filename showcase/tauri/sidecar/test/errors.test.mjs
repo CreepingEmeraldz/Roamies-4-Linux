@@ -189,4 +189,13 @@ assert.match(detailsText(undefined), /^Roamies error \? \(\?\)/, 'nothing to rep
   assert.match(side, /openUrl\(CHATGPT_USAGE_URL\)/, "and opens ChatGPT's usage settings");
 }
 
+// This fork's update check (forkupdate.mjs): a refused or broken GitHub says so, instead of "didn't work (E40)".
+{
+  const code = (msg) => explain('update', new Error(msg)).code;
+  assert.equal(code('GitHub answered 403'), 'E46'); assert.equal(code('GitHub answered 429'), 'E46');
+  assert.equal(code('GitHub answered 502'), 'E47');
+  assert.equal(code('no release found'), 'E48');
+  assert.match(explain('update', new Error('GitHub answered 403')).text, /limiting update checks/);
+}
+
 console.log('errors tests: passed');

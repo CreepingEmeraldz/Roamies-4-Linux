@@ -87,6 +87,10 @@ const AREAS = {
       ['E43', NO_ACCESS, () => "I couldn't replace the app. Reinstall it from GitHub.", true],
       ['E44', /valid release JSON|platform .{0,40}not found|\b404\b/i, () => "Couldn't check for updates. Check your internet."],
       ['E45', NET, () => "The update didn't download. Check your internet."],
+      // This fork's Linux builds check its GitHub releases page (forkupdate.mjs), which has its own ways to say no.
+      ['E46', /GitHub answered (?:403|429)/i, () => 'GitHub is limiting update checks. Try again soon.'],
+      ['E47', /GitHub answered 5\d\d/i, () => "GitHub isn't answering. Try again later."],
+      ['E48', /no release found/i, () => "I couldn't find a release to compare with."],
     ],
   },
   hearing: {
