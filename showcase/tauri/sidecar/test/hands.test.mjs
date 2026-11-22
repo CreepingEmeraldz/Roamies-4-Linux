@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 if (!['darwin', 'win32'].includes(process.platform)) { console.log('hands tests: skipped (macOS and Windows only)'); process.exit(0); }
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'roamies-hands-test-'));
@@ -91,6 +92,17 @@ assert.equal(calls().find((c) => c[0] === 'capture').length, 4, 'no preview thum
 // An app that isn't installed: one clear answer instead of "No matching window".
 await assert.rejects(tool('act_in_app').execute({ target: 'NoSuchAppRoamiesTest', steps: [{ do: 'key', key: 'return' }] }, ctx), /no app called "NoSuchAppRoamiesTest"/);
 await assert.rejects(tool('open').execute({ target: 'NoSuchAppRoamiesTest' }, ctx), /no app called "NoSuchAppRoamiesTest"/);
+
+// #159: steps sent as JSON text, or a single step, are read as the list; a missing file (path or file:// link) says so.
+{
+  const params = tool('act_in_app').parameters;
+  assert.deepEqual(params.parse({ target: 'X', steps: '[{"do":"key","key":"return"}]' }).steps, [{ do: 'key', key: 'return' }]);
+  assert.deepEqual(params.parse({ target: 'X', steps: { do: 'click_text', text: 'New issue' } }).steps, [{ do: 'click_text', text: 'New issue' }]);
+  assert.throws(() => params.parse({ target: 'X', steps: 'click New issue' }));
+  const gone = path.join(path.dirname(fileURLToPath(import.meta.url)), 'roamies-test-no-such-page.html'); // the run's HOME is a temp folder, which open refuses
+  await assert.rejects(tool('open').execute({ target: gone }, ctx), /nothing at .*no such file/);
+  await assert.rejects(tool('open').execute({ target: pathToFileURL(gone).href }, ctx), /nothing at .*no such file/);
+}
 
 // A bare web address opens as a link (in the app asked for), not as an app called "example.com".
 const opened = await tool('open').execute({ target: 'example.invalid-tld-roamies.test', app: 'NoSuchAppRoamiesTest' }, ctx).catch((e) => String(e.message));

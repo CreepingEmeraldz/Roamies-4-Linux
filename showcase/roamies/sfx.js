@@ -149,7 +149,7 @@
   R.sfx = {
     names: Object.keys(SOUNDS),
     play(name, arg, again) {
-      const fn = SOUNDS[name];
+      const fn = Object.hasOwn(SOUNDS, name) ? SOUNDS[name] : null;
       if (fn && enabled && !live && !again && window.ROAMIE_LINUX && window.ROAMIE_AUTOSOUND) {
         start();
         live.ac.resume().then(() => R.sfx.play(name, arg, true)).catch(() => {});
@@ -168,6 +168,7 @@
     },
     // Offline render, used to check length and loudness of each sound.
     async render(name, secs = 1.2, arg) {
+      if (!Object.hasOwn(SOUNDS, name)) throw new Error(`No sound called ${name}`);
       const ac = new OfflineAudioContext(1, Math.ceil(44100 * secs), 44100);
       SOUNDS[name](rig(ac, ac.destination), 0.01, arg);
       return (await ac.startRendering()).getChannelData(0);

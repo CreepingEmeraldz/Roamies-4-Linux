@@ -6,12 +6,13 @@ import { existsSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { createWebFetchTool, createWebSearchTool, runSideWebSearch, runSideWebSearchViaClaudeCode } from '@kenkaiiii/ggcoder/web';
 import { z } from 'zod';
 import { parseSipsSize, readProblem, rematch, sameBounds, shotFits, shotMap, shotProblem, shotUnits, snapRect, toScreen } from './pointing.mjs';
 import { decide, findSaved } from './commands.mjs';
 import { ASK, BLOCK, checkDrawAction, checkFetch, checkOpen, checkRead, checkWrite, classifyCommand, isRiskyClick, isYes, riskyKind } from './safety.mjs';
-import { CARDS, DrawArgs, drawModelSchema, LIMITS, checkDraw, createLists, createParts, createPhotos, describeParts, faviconFor, pickTextMatch, quizNote, readSecs, resolveTargets } from './draw.mjs';
+import { CARDS, DrawArgs, drawModelSchema, LIMITS, checkDraw, createLists, createParts, createPhotos, describeParts, faviconFor, pickTextMatch, quizNote, readSecs, resolveTargets, unjson } from './draw.mjs';
 import { plain } from './intro.mjs';
 import { linuxSession, seesPointer } from './platform.mjs';
 import { addCommitment, forgetFact, getCommitment, parseDue, parseRepeat, repeatLabel, updateCommitment } from './store.mjs';
@@ -23,9 +24,10 @@ const HOME = os.homedir();
 export const expand = (p) => path.resolve(String(p).replace(/^~(?=$|\/|\\)/, HOME));
 const clip = (s, n) => (s.length > n ? s.slice(0, n) + `\n…(${s.length - n} more characters)` : s);
 // windowsHide: no console window flashing up for each command or screenshot on Windows.
+// shell: false always: arguments go to the program as they are, never through a shell.
 // onLine: called with each line of stderr as it arrives (the hands helper's live progress).
 export const run = (cmd, args, { onLine, ...opts } = {}) => new Promise((res) => {
-  const child = execFile(cmd, args, { maxBuffer: 8 << 20, timeout: 60_000, windowsHide: true, ...opts }, (err, stdout, stderr) => res({ err, stdout: String(stdout), stderr: String(stderr) }));
+  const child = execFile(cmd, args, { maxBuffer: 8 << 20, timeout: 60_000, windowsHide: true, ...opts, shell: false }, (err, stdout, stderr) => res({ err, stdout: String(stdout), stderr: String(stderr) }));
   if (!onLine || !child.stderr) return;
   let buf = '';
   child.stderr.on('data', (d) => {
@@ -869,14 +871,15 @@ export function createTools({ allowActions, ui, ask, openUrl, onCommitments, foc
         description: !HANDS ? LINUX_ACT : "Do things in another app: click, fill forms, pick from dropdowns and date pickers, scroll, press keys. Steps run in order: put a whole task in one call. {do:'click_text', text}: a link, button or tab by its visible words (no read_window needed). {do:'fill', field, text}: one text field by its label, placeholder or id; replaces its text and checks it took (never click a label and type). {do:'choose', field, option}: an option in a dropdown, menu, type-to-search box or picker, however long the list (never scroll a list yourself). {do:'hover', text, near} (or id, or x, y): rests the pointer to show hidden controls (a ⋯ menu), then click_text what appears, in the same call. {do:'scroll', direction, amount, text or id}: only for content that loads as you scroll; to_end: true keeps going until a feed stops loading (things already on the page need no scrolling: click_text, fill and draw find them). {do:'click', id}; {do:'key', key} ('return', 'tab', 'escape'); {do:'type', text} only with the cursor already in a field; {do:'click_at', x, y} screenshot pixels, last resort; {do:'wait', seconds}. near: words from one item (its author, a post's first words) when many controls look alike (a Reply under every post). Dates: fill them as the page writes them (10/30/2026); if a calendar opens, choose the month and year, then click_text the day. Web addresses: use open, not the address bar; to search a site, open its search URL (youtube.com/results?search_query=…) unless asked to use its box (then fill it and press return). The result shows the window after the steps, with fresh ids and values: check it there, not with read_window. Every item on a long page: to_end if it loads more, one read_window, then one call doing every item with near; never survey a page by scrolling and screenshots. Never pay, send or delete unless asked for exactly that; pointing at a button isn't a request to click it. Delete, pay, send and sign-out clicks ask the user themselves, so when asked to click one, call this straight away instead of asking.",
         parameters: z.object({
           target: z.string().optional(),
-          steps: z.array(z.object({
+          // Steps sent as JSON text, or one step on its own, as some free models do (#159), are read as the list they mean.
+          steps: z.preprocess((v) => { const x = unjson(v); return x && typeof x === 'object' && !Array.isArray(x) ? [x] : x; }, z.array(z.object({
             // read_window and take_screenshot aren't steps (the result already shows the window), but models put them
             // in anyway; they're dropped instead of failing the whole call.
             do: z.enum(['click_text', 'fill', 'choose', 'scroll', 'set', 'focus', 'click', 'type', 'key', 'click_at', 'hover', 'wait', 'read_window', 'take_screenshot', 'screenshot']),
             id: z.number().int().optional(), field: z.string().optional(), text: z.string().optional(), option: z.string().optional(), near: z.string().optional(),
             key: z.string().optional(), direction: z.enum(['down', 'up', 'left', 'right']).optional(), amount: z.number().int().optional(), to_end: z.boolean().optional(),
             x: z.number().optional(), y: z.number().optional(), seconds: z.number().optional(),
-          })).min(1).max(40),
+          })).min(1).max(40)),
         }),
         executionMode: 'sequential',
         execute: async ({ target = 'front', steps: given }, ctx) => {
@@ -1057,11 +1060,15 @@ A drawing stays until it's cleared, the window changes or the next one replaces 
         // A bare web address ("example.com", "www.bbc.co.uk/news") is a link, not an app name: it used to fail as
         // "Unable to find application named example.com" and cost a retry. App bundles ("Notes.app") stay apps.
         if (/^(?:[a-z0-9-]+\.)+[a-z]{2,}(?::\d+)?(?:[/?#]\S*)?$/i.test(t) && !/\.app$/i.test(t)) t = `https://${t}`;
+        // A file:// link is a file on this computer: opened as its path, with the same checks as any path (#159).
+        if (/^file:\/\//i.test(t)) { try { t = fileURLToPath(t); } catch { /* not a local file link: checkOpen refuses it */ } }
         const isFile = /^[~/.]/.test(t) && await fs.stat(expand(t)).then((s) => s.isFile() && (s.mode & 0o111) !== 0, () => false);
         allowed(checkOpen(t, HOME, { executable: isFile }));
         agentChangesScreen();
         // mailto: has no //, but it's a link too (it used to be taken for an app name and fail).
-        const isUrl = /^[a-z][a-z0-9+.-]*:\/\//i.test(t) || /^mailto:/i.test(t), isPath = /^[~/.]/.test(t) || /^[a-z]:\\/i.test(t);
+        const isUrl = /^[a-z][a-z0-9+.-]*:\/\//i.test(t) || /^mailto:/i.test(t), isPath = /^[~/.]/.test(t) || /^[a-z]:[\\/]/i.test(t);
+        // A missing file used to come back as "There's no app called C:\…" (#159).
+        if (isPath && !(await fs.stat(expand(t)).then(() => true, () => false))) throw new Error(`There's nothing at ${t}: no such file or folder. Check the path (or make the file first).`);
         let r;
         const inApp = app && ['darwin', 'win32'].includes(process.platform) && (isUrl || isPath) ? ['-a', String(app)] : [];
         if (process.platform === 'darwin') r = await run('open', isUrl || isPath ? [...inApp, isPath ? expand(t) : t] : ['-a', t]);

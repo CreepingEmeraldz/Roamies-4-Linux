@@ -79,6 +79,8 @@ export function pickHeavy(kinds, heavy, canRun) {
 
 /** Is any job set to its own model? */
 export const hybridOn = (heavy) => KINDS.some((k) => !!parseSpec(heavy?.[k]));
+/** The user's own default model, also while a heavy job runs on another one (`routed`): what's saved and shown (#161). */
+export const userDefault = (config, routed, defaultPick) => (routed && defaultPick ? { provider: defaultPick.provider, model: defaultPick.model } : { provider: config.provider, model: config.model });
 
 // ---------- naming a model in their own words ----------
 // "use Opus for this", "hand it off to Gemini", "ask Luna": the user picks the model for a job that isn't in the list

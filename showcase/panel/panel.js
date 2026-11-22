@@ -213,7 +213,7 @@
     const s = state.status;
     $('led').className = `led${s.state === 'ready' ? ' on' : s.state === 'busy' ? ' busy' : ''}`;
     const now = $('now');
-    now.replaceChildren(el('b', { textContent: s.text }), state.model ? ` · ${state.model.name}` : s.state === 'off' ? ' · Sign in on the Model page' : '');
+    now.replaceChildren(el('b', { textContent: s.text }), state.hybrid?.active ? ` · ${modelName(state.hybrid.active)} (for this job)` : state.model ? ` · ${state.model.name}` : s.state === 'off' ? ' · Sign in on the Model page' : '');
     now.title = now.textContent;
     $('ver').textContent = `v${state.version}`;
     updateButton();
@@ -1186,7 +1186,7 @@
   function show(name, focus = false) {
     // Pages that became Abilities tabs (and Memory's old Skills tab) open that tab.
     if (ABILITY_TABS.some(([id]) => id === name)) { ui.tabs.abilities = name; name = 'abilities'; }
-    if (!PANES[name]) name = name === 'settings' ? 'model' : 'home';
+    if (!Object.hasOwn(PANES, name)) name = name === 'settings' ? 'model' : 'home';
     const changed = name !== tab;
     if (!changed && !focus) return;
     tab = name;

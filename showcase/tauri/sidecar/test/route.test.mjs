@@ -1,6 +1,6 @@
 // Hybrid models: which kind of job a request is, and which model it should run on (route.mjs). Run: npm test
 import assert from 'node:assert/strict';
-import { findModelByName, findModelMention, hybridOn, isChitchat, jobKinds, kindOfTool, parseSpec, pickHeavy } from '../route.mjs';
+import { findModelByName, findModelMention, hybridOn, isChitchat, jobKinds, kindOfTool, parseSpec, pickHeavy, userDefault } from '../route.mjs';
 
 const no = () => false; // the agent check: not under test here
 const kinds = (t) => jobKinds(t, { agentCheck: no });
@@ -99,6 +99,14 @@ assert.equal(hybridOn(undefined), false);
   assert.equal(by('Claude Haiku 5.5'), 'anthropic:claude-haiku-5-5');
   assert.equal(by('grok'), null);
   assert.equal(by(''), null);
+}
+
+// While a computer-use job borrows its own model, the default shown and saved stays the user's pick (#161).
+{
+  const config = { provider: 'openrouter', model: 'nvidia/nemotron-3.5-super-vl:free' }; // routed: config holds the job's model
+  const mine = { provider: 'gemini', model: 'gemini-3.5-flash-lite' };
+  assert.deepEqual(userDefault(config, { slot: 'computer' }, mine), mine);
+  assert.deepEqual(userDefault(config, null, null), config);
 }
 
 console.log('route tests: passed');

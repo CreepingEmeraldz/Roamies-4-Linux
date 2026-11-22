@@ -529,3 +529,24 @@ console.log('safety loophole tests: passed');
   assert.equal(checkWrite('~/Roamies/Agents/a/files/Data/x.md', H).level, SAFE, 'an agent folder named Data is theirs');
   console.log('safety (data folder) tests: passed');
 }
+
+// Commands built to make a regex backtrack for ages (CodeQL js/redos) are still read straight away.
+{
+  const t0 = performance.now();
+  for (const c of ['"' + '\\\\!'.repeat(40), 'cd' + '   &&cd'.repeat(40), 'cd ' + '# &&cd '.repeat(40), 'for _ in ' + '-'.repeat(60)]) classifyCommand(c, HOME);
+  assert.ok(performance.now() - t0 < 1000, 'slow-regex commands took too long');
+  assert.equal(classifyCommand('for i in 1 2; do echo ${i > /tmp/x/n.txt; done', HOME, { exists: () => false }).level, ASK, 'unclosed ${ is not unrolled');
+  assert.equal(classifyCommand('echo "a\\" b" > /dev/null', HOME).level, classifyCommand('echo "a b" > /dev/null', HOME).level, 'escaped quote inside quotes');
+}
+
+// The "search all of home" refusal names Spotlight and macOS prompts only on a Mac (#159: Windows got told to use mdfind).
+{
+  const real = process.platform;
+  try {
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    const r = checkRead('C:/Users/ken', 'C:/Users/ken', { recursive: true });
+    assert.equal(r.level, BLOCK); assert.doesNotMatch(r.reason, /mdfind|macOS/);
+    Object.defineProperty(process, 'platform', { value: 'darwin' });
+    assert.match(checkRead(HOME, HOME, { recursive: true }).reason, /mdfind/);
+  } finally { Object.defineProperty(process, 'platform', { value: real }); }
+}

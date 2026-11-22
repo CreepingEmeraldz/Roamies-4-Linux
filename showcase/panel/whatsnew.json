@@ -1,6 +1,16 @@
 {
   "updates": [
     {
+      "version": "0.1.50",
+      "date": "2026-11-23",
+      "items": [
+        { "kind": "fixed", "title": "Your model stays your model", "text": "During a computer job, the Model page showed that job's model as yours. Fixed. Thanks!" },
+        { "kind": "fixed", "title": "Fewer E20s on free models", "text": "Some free models sent app steps in the wrong shape and failed with E20. I read them now." },
+        { "kind": "fixed", "title": "File search on Windows", "text": "On Windows, searching for files got advice meant for Macs. Not anymore." },
+        { "kind": "fixed", "title": "Opening files", "text": "A missing file said there was no such app, and file links wouldn't open. Fixed." }
+      ]
+    },
+    {
       "version": "0.1.49",
       "date": "2026-11-21",
       "items": [

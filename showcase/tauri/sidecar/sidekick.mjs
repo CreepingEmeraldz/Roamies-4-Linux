@@ -49,7 +49,7 @@ import { createSpeaker, voiceProblemText, voiceWhy } from './speaker.mjs';
 import { LITE_BUDGET, LITE_TOOLS, LITE_TURNS, liteSystem } from './lite.mjs';
 import { handoffNote } from './quote.mjs';
 import { DELEGATE_MODES, SUBAGENTS, activeCrew, crewText, delegateNote, findSubagent } from './subagents.mjs';
-import { JOB_KINDS, findModelByName, findModelMention, hybridOn, isChitchat, jobKinds, kindOfTool, parseSpec, pickHeavy } from './route.mjs';
+import { JOB_KINDS, findModelByName, findModelMention, hybridOn, isChitchat, jobKinds, kindOfTool, parseSpec, pickHeavy, userDefault } from './route.mjs';
 import { becauseOf, createLimits, firstFree, isQuota, limitFrom, rateWait, untilWords } from './limits.mjs';
 import { SLOTS, isSetting, resolveEffort } from './effort.mjs';
 import { pickNotch } from './notch.mjs';
@@ -216,7 +216,8 @@ let shellInfo = null; // resolves the shell's reply to it: screens, tray, panel,
 // and `defaultPick` holds the user's default. Only the default is ever saved.
 let routed = null, defaultPick = null;
 let turnWords = ''; // what they said this turn, verbatim: attached to every handoff (route, agents)
-const saveConfig = () => writeJson(CONFIG_PATH, routed && defaultPick ? { ...config, provider: defaultPick.provider, model: defaultPick.model } : config, { backup: true });
+const savedConfig = () => ({ ...config, ...userDefault(config, routed, defaultPick) });
+const saveConfig = () => writeJson(CONFIG_PATH, savedConfig(), { backup: true });
 
 // ---------- spoken replies (Fish Audio, Gemini or VoiceStudio) ----------
 // The key is the user's own: in the Keychain (macOS), DPAPI-encrypted (Windows) or the desktop's keyring (Linux),
@@ -2247,7 +2248,7 @@ async function saveDiagnostics() {
       locale: Intl.DateTimeFormat().resolvedOptions().locale, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     };
     const app = {
-      version: VERSION, provider: config.provider, model: config.model, signedIn: [...signedIn].filter(([, on]) => on).map(([p]) => p),
+      version: VERSION, provider: config.provider, model: config.model, ...(routed ? { routedFor: routed.slot } : {}), signedIn: [...signedIn].filter(([, on]) => on).map(([p]) => p),
       busy, sidecarUpMinutes: Math.round(process.uptime() / 6) / 10,
       voice: { on: VOICE_OK && config.voice !== false, needsModel: NEEDS_MODEL, model: { status: voiceModel.status, error: voiceModel.error ?? undefined }, hotkeys: HOTKEYS_OK, keys: keys() },
       replies: config.replies, tts: tts().id, voiceOn: speech.on, ...(tts().local ? { voicestudio: { ok: speech.local?.ok ?? null, reason: speech.local?.reason ?? null, engine: speech.local?.engine ?? null } } : {}), hands: hasHands(process.platform, process.env.ROAMIES_HANDS), handsPath: process.env.ROAMIES_HANDS ? 'set' : 'none',
@@ -2256,7 +2257,7 @@ async function saveDiagnostics() {
     const sections = [
       ['System', system], ['Roamies', app], ['Screens, tray, panel, helpers and permissions (from the app)', shellOut],
       ...(audioText ? [['Audio devices (from the system)', audioText]] : []),
-      ['Settings (secrets and names removed)', scrubConfig(config)],
+      ['Settings (secrets and names removed)', scrubConfig(savedConfig())],
       ['Agent log (sidekick.log)', await tail(path.join(gg, 'sidekick.log'), 400_000)],
       ['Voice helper log (sidekick-voice.log)', await tail(path.join(gg, 'sidekick-voice.log'), 200_000)],
       ['Setup guide log (sidekick-guide.log)', await tail(path.join(gg, 'sidekick-guide.log'), 100_000)],
@@ -2324,7 +2325,8 @@ async function refreshDeps() {
   depsList = await checkDeps({ overlay: process.env.ROAMIES_OVERLAY || 'x11', session: SESSION, desktop: process.env.XDG_CURRENT_DESKTOP || '', osRelease }).catch((e) => { console.error('deps', e); return depsList; });
 }
 function panelState() {
-  const current = getModel(config.model);
+  // The Model page's model is the user's default, never the one a heavy job is borrowing (that's hybrid.active).
+  const mine = userDefault(config, routed, defaultPick), current = getModel(mine.model);
   const doing = activity.doing();
   return {
     deps: LINUX ? depsList : null,
@@ -2343,7 +2345,7 @@ function panelState() {
     // The Shortcuts page's type-to-ask pick: the pairs talk isn't using, or off.
     writeKeys: HOTKEYS_OK ? { value: keys().write ? sortMods(keys().write).join('+') : 'off',
       pairs: writeChords(process.platform).filter((c) => !samePair(c, keys().talk)).map((c) => [sortMods(c).join('+'), pairWords(c)]) } : null,
-    model: current ? { provider: config.provider, id: config.model, name: current.name, providerLabel: PROVIDER_LABELS[config.provider] ?? config.provider } : null,
+    model: current ? { provider: mine.provider, id: mine.model, name: current.name, providerLabel: PROVIDER_LABELS[mine.provider] ?? mine.provider } : null,
     providers: MENU_PROVIDERS.map((p) => {
       const meta = AUTH_PROVIDERS.find((x) => x.value === p);
       const on = !!signedIn.get(p);

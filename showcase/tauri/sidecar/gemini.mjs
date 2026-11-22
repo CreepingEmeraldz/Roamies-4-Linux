@@ -101,7 +101,7 @@ export class GeminiVoice {
   say(text) {
     if (this.state !== 'open') return;
     const p = plain(text);
-    if (!/[\p{L}\p{N}]/u.test(p.text.replace(/<[^>]*>/g, ''))) return; // nothing to say ("…", a lone cue or tag): asking would get no audio and fail the reply
+    if (!p.text.split(/<[^>]*>/).some((s) => /[\p{L}\p{N}]/u.test(s))) return; // nothing to say ("…", a lone cue or tag): asking would get no audio and fail the reply
     this.jobs.push({ ...p, chunks: [], state: 'waiting', odd: null, timer: null });
     this.pump();
   }

@@ -64,7 +64,7 @@ export function cueFeel(sentence) {
   return null;
 }
 export const CUE_INTENSITY = ['slightly', 'very', 'extremely', 'a bit', 'a little', 'quietly', 'deeply'];
-const alt = (list) => list.slice().sort((a, b) => b.length - a.length).map((x) => x.replace(/[-]/g, '\\-')).join('|');
+const alt = (list) => list.slice().sort((a, b) => b.length - a.length).map((x) => x.replace(/[.*+?^${}()|[\]\\-]/g, '\\$&')).join('|');
 const MOOD = alt(VOICE_CUES.emotions);
 const DELIVERY = alt([...VOICE_CUES.tones, ...VOICE_CUES.sounds, ...VOICE_CUES.effects]);
 const CUE_BODY = `(?:(?:${alt(CUE_INTENSITY)})\\s+)?(?:(?:${MOOD})(?:(?:,\\s*|\\s+and\\s+)(?:${MOOD}))?|${DELIVERY})`;

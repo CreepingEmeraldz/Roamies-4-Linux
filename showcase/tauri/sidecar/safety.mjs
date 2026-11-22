@@ -104,9 +104,10 @@ export function checkRead(p, home, { recursive = false } = {}) {
   home = slash(home);
   const abs = norm(p, home), all = bothOf(abs), hit = (list) => all.some((a) => list.some((re) => re.test(rel(a, home)) || re.test(a)));
   if (hit(SECRET)) return { ...verdict(BLOCK, `${p} holds passwords or keys, so I never read it.`), path: abs };
-  if (hit(PRIVATE)) return { ...verdict(BLOCK, `${p} is another app's private data. Reading it sets off macOS privacy prompts.`), path: abs };
+  const mac = process.platform === 'darwin';
+  if (hit(PRIVATE)) return { ...verdict(BLOCK, `${p} is another app's private data.${mac ? ' Reading it sets off macOS privacy prompts.' : ''}`), path: abs };
   if (recursive && (abs === home || abs === '/' || /^[a-z]:$/i.test(abs) || abs === path.join(home, 'Library') || abs === path.join(home, 'AppData') || /^(\/Users|\/Volumes|\/home|[a-z]:\/Users)$/i.test(abs))) {
-    return { ...verdict(BLOCK, `Searching all of ${p} reaches into other apps' data and sets off macOS privacy prompts. Pick a specific folder, or use Spotlight (mdfind) to find files by name.`), path: abs };
+    return { ...verdict(BLOCK, `Searching all of ${p} reaches into other apps' data${mac ? ' and sets off macOS privacy prompts' : ''}. Pick a specific folder (like Documents or Downloads)${mac ? ', or use Spotlight (mdfind) to find files by name' : ''}.`), path: abs };
   }
   return { ...verdict(SAFE), path: abs };
 }
@@ -162,7 +163,7 @@ export function splitCommand(cmd) {
   return out;
 }
 
-const words = (s) => (s.match(/"(?:\\.|[^"])*"|'[^']*'|\S+/g) ?? []).map((w) => w.replace(/^(['"])([\s\S]*)\1$/, '$2'));
+const words = (s) => (s.match(/"(?:\\.|[^"\\])*\\?"|'[^']*'|\S+/g) ?? []).map((w) => w.replace(/^(['"])([\s\S]*)\1$/, '$2'));
 // Skip env assignments and wrappers to find the program that really runs. `assigns`: it sets environment variables
 // for it (PAGER=, MANPAGER=, GIT_EXTERNAL_DIFF= and the like can make a read-only program run another one).
 function program(ws) {
@@ -350,9 +351,9 @@ const redirectTargets = (text) => [...text.matchAll(/(?:^|[^>])>{1,2}(?!&)\s*("[
  *  that makes a new file run like write_file making one; without it every redirect asks. */
 // "for i in 1 2 3; do echo $i > n$i.txt; done" (also with seq 1 N): a plain loop that only writes new files.
 // It's run like the same commands written out one by one (so each file is checked like write_file making a new
-// one); anything else in a loop still asks.
+// one); anything else in a loop still asks. Written so no part can match the same text two ways (no slow backtracking).
 function unrollLoop(s) {
-  const m = s.match(/^((?:(?:cd|mkdir(?:\s+-p)?)\s+[^;&|`$()]+?\s*&&\s*)*)for\s+([a-z_]\w*)\s+in\s+((?:[\w.-]+\s*)+|\$\(\s*seq\s+(\d+)\s+(\d+)\s*\))\s*;\s*do\s+([^;`$()]*?(?:\$\{?\2\}?[^;`$()]*?)*)\s*;?\s*done((?:\s*&&\s*[^;`$()|]+)?)$/);
+  const m = s.match(/^((?:(?:cd|mkdir)\s+[^;&|`$()\s]+(?:\s+[^;&|`$()\s]+)*\s*&&\s*)*)for\s+([a-z_]\w*)\s+in\s+([\w.-]+(?:\s+[\w.-]+)*|\$\(\s*seq\s+(\d+)\s+(\d+)\s*\))\s*;\s*do\s+([^;`$()]*?(?:(?:\$\2|\$\{\2\})[^;`$()]*?)*)\s*;?\s*done((?:\s*&&\s*[^;`$()|]+)?)$/);
   if (!m) return null;
   const [, pre, v, list, a, b, body, post] = m;
   const vals = a != null ? (Number(b) - Number(a) >= 0 && Number(b) - Number(a) < 100 ? Array.from({ length: Number(b) - Number(a) + 1 }, (_, i) => String(Number(a) + i)) : null) : list.trim().split(/\s+/);
