@@ -251,7 +251,9 @@
       // Resting on it for a moment (not just passing over it after a fast flick).
       fol.rest = something && dz === 0 && sp < 200 ? fol.rest + env0.dt : 0;
       const onIt = fol.rest > 0.2;
-      return fol.reach > 0.15 || onIt || typing || R.panelHit?.(p[0], p[1]);
+      // A reply too long for its bubble (it scrolls) stays where it is, so there's time to reach it and read it.
+      const long = !!b && !b.closing && b.kind === 'speech' && !!b.overflow && !b.input;
+      return fol.reach > 0.15 || onIt || typing || long || R.panelHit?.(p[0], p[1]);
     };
     const env0 = { mouse: {}, dt: 0 };
     // From the tip to the body point: the cursor form's arrow tip sits up and left of it. The same offset in every form,
@@ -600,7 +602,8 @@
       if (done) {
         if (!bb.hover && !bb.expanded && !R.voiceOut?.playing()) bb.dwell += dt;
         // Long enough to read, about 200 words a minute (#143: capped at 4.5 s, long replies closed mid-read).
-        const linger = clamp(1.1 + bb.text.split(/\s+/).filter(Boolean).length / 3.3, 1.3, 30);
+        // A long one (it scrolls) gets up to 90 s, and the clock only runs while the pointer is off it.
+        const linger = clamp(1.1 + bb.text.split(/\s+/).filter(Boolean).length / 3.3, 1.3, bb.overflow ? 90 : 30);
         if (bb.kind === 'speech' && bb.dwell > linger) close(bb);
         if (bb.kind === 'thought' && bb.dwell > 0.4) close(bb);
       }
