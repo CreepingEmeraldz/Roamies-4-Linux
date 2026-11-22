@@ -5,7 +5,7 @@ use serde_json::Value;
 use std::process::Command;
 use std::time::{Duration, Instant};
 
-const UNSUPPORTED: [&str; 4] = ["click_at", "hover", "scroll", "drag"];
+const UNSUPPORTED: [&str; 3] = ["click_at", "hover", "drag"];
 const PRESS: [&str; 10] = ["click", "press", "activate", "jump", "open", "toggle", "select", "check", "uncheck", "push"];
 
 fn read(bus: &Bus, w: &Win) -> Read {
@@ -151,11 +151,11 @@ pub fn run(bus: &Bus, w: &Win, steps: &Value) -> Result<Vec<String>, String> {
     for st in steps {
         let d = s(st, "do");
         if UNSUPPORTED.contains(&d) {
-            return Err(format!("\"{d}\" isn't possible in other apps on Linux yet (no keyboard or pointer to borrow). Use click_text, click (id), fill or choose, and press a submit button instead of a key; nothing was done."));
+            return Err(format!("\"{d}\" isn't possible in other apps on Linux yet (no pointer to borrow). Use click_text, click (id), fill, choose or scroll, and press a submit button instead of a key; nothing was done."));
         }
     }
-    if steps.iter().any(|st| s(st, "do") == "key") && !have_wtype() {
-        return Err("Pressing keys in other apps needs wtype (sudo apt install wtype); nothing was done. Press a button with click_text instead.".into());
+    if steps.iter().any(|st| matches!(s(st, "do"), "key" | "scroll")) && !have_wtype() {
+        return Err("Pressing keys and scrolling in other apps need wtype (sudo apt install wtype); nothing was done. Press a button with click_text instead.".into());
     }
     let mut r = read(bus, w);
     let mut done = vec![];
@@ -193,6 +193,33 @@ pub fn run(bus: &Bus, w: &Win, steps: &Value) -> Result<Vec<String>, String> {
                 let a: Vec<&str> = a.iter().map(String::as_str).collect();
                 wtype(&a)?;
                 done.push(format!("key {}", s(st, "key")));
+                changed = true;
+            }
+            "scroll" => {
+                // Scrolling is Page Up/Down (or Home/End) in the window in front, so a text field with the cursor would take them.
+                if r.controls.iter().any(|c| c["focused"] == true && matches!(s(c, "role"), "text field" | "text area")) {
+                    return Err("A text field has the cursor, so the keys would go into it. click_text something on the page first, then scroll.".into());
+                }
+                if st["id"].is_u64() || !s(st, "text").is_empty() {
+                    let i = pick(&r, &[])?;
+                    let _ = focus(bus, &r.els[i]);
+                    std::thread::sleep(Duration::from_millis(120));
+                }
+                let dir = if s(st, "direction").is_empty() { "down" } else { s(st, "direction") };
+                let (page, edge) = match dir { "up" => ("Prior", "Home"), "left" => ("Left", "Home"), "right" => ("Right", "End"), _ => ("Next", "End") };
+                if st["to_end"] == true {
+                    // A feed that loads more at the bottom: keep going to the end a few times, giving it a moment each time.
+                    for _ in 0..4 {
+                        wtype(&["-k", edge])?;
+                        std::thread::sleep(Duration::from_millis(700));
+                    }
+                } else {
+                    for _ in 0..st["amount"].as_u64().unwrap_or(1).clamp(1, 10) {
+                        wtype(&["-k", page])?;
+                        std::thread::sleep(Duration::from_millis(150));
+                    }
+                }
+                done.push(format!("scroll {dir}"));
                 changed = true;
             }
             "type" if have_wtype() => {

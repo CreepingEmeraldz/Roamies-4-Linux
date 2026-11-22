@@ -1,10 +1,13 @@
-## Long replies are easier to read
+## Roamies waits out a rate limit instead of giving up
 
-When a reply is too long for its bubble, three things change:
-- Roamie stops following your cursor while it's up, so the bubble stays put and you can reach it.
-- Once the reply has finished, the bubble opens out to its full height (up to about 60% of the screen), starting from the first line, so you can read it without scrolling. Click it to fold it back.
-- It stays up for as long as 90 seconds instead of 30, and the clock pauses while your pointer is on it.
+When a provider says you're going too fast (Gemini's free tier does this a lot), and no backup model is set up to take over, Roamies now says so, for example "Gemini is rate limiting me. I'll try again in a minute", with a **Cancel** button. When the time is up, it carries on from where it stopped. It uses the wait the provider asks for when it gives one, and a minute when it doesn't.
 
-## The text box glides after your cursor
+It tries up to three times. It doesn't wait for daily or monthly quotas or an empty account, since those won't clear in minutes, and shows the usual message instead. Sending a new message also ends the wait.
 
-The type-to-ask box now follows the cursor with the same smooth spring Roamie uses, instead of jumping to every position. It still holds still when your cursor is on it, so you can click it.
+## The text box keeps clear of Roamie
+
+Instead of only choosing a side, the type-to-ask box now looks at where Roamie actually is and takes whichever corner of the cursor (below or above, left or right) doesn't overlap him, including at the screen edges.
+
+## Roamie can scroll other apps
+
+In another app, Roamie can now scroll the page or list in front by pages, or jump to the end of a feed that loads more as you go (up and down, left and right). It presses Page Up and Page Down and Home and End through `wtype`, so it needs `wtype` installed, the same as typing. If a text box has the cursor, it asks to click out of it first, since the keys would go into the box.
