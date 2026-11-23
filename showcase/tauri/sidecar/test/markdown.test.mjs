@@ -48,3 +48,23 @@ assert.equal(md.flat('see [the do').s, 'see [the do', 'a bracket alone stays');
 assert.equal(md.flat('see [the docs](https://ex').s, 'see the docs', 'a link mid-stream shows its text');
 assert.equal(md.flat('a\n```\nx = 1\n```\nb').s, 'a\nx = 1\nb', 'fences go, their lines stay');
 console.log('markdown tests: passed');
+
+// Maths: Unicode in the dot-grid font, code untouched, prices left alone.
+const flatS = (x) => md.flat(x).s;
+assert.equal(flatS('Area is $\\pi r^2$.'), 'Area is πr².');
+assert.equal(flatS('$\\frac{a+b}{2}$'), '(a+b)/2');
+assert.equal(flatS('$\\frac{1}{2}$ and $x_{1}$'), '1/2 and x₁');
+assert.equal(flatS('$$\\sqrt{x^2+1}$$'), '√(x²+1)');
+assert.equal(flatS('\\(a \\times b \\le c\\)'), 'a × b ≤ c');
+assert.equal(flatS('so \\alpha \\to \\infty'), 'so α → ∞', 'bare commands too');
+assert.equal(flatS('$e^{i\\pi}+1=0$'), 'e^(iπ)+1=0');
+assert.equal(flatS('It costs $5 and $10 total'), 'It costs $5 and $10 total', 'prices stay');
+assert.equal(flatS('Win path C:\\temp\\new'), 'Win path C:\\temp\\new', 'backslashes that are not maths stay');
+assert.equal(flatS('use `$\\frac{a}{b}$` literally'), 'use $\\frac{a}{b}$ literally', 'code is left alone');
+assert.equal(flatS('$x^{n+1}$'), 'xⁿ⁺¹');
+assert.equal(flatS('$x^{a b}$'), 'x^(a b)', 'what has no superscript form stays readable');
+assert.deepEqual(plain(md.blocks('So $\\frac{1}{2}$.'))[0].c.map((x) => x.s).join(''), 'So 1/2.');
+// A reply sent as an escaped string (the bubble that showed \n\n and \`) reads as written.
+assert.equal(flatS('One.\\n\\nTwo with \\`code\\`.'), 'One.\n\nTwo with code.');
+assert.equal(flatS('print "a\\nb" here'), 'print "a\\nb" here', 'a lone \\n in prose stays');
+console.log('markdown math ok');

@@ -1,1 +1,3 @@
 - Faster multi-step actions in other apps: a pause of half a second after every step is now only about a tenth of a second between keypresses, typing and waits (it stays half a second after a click, where the page needs a moment).
+- Maths in replies now reads properly in bubbles and cards: fractions, powers, roots, Greek letters and symbols (`$\frac{a}{b}$`, `x^{2}`, `\sqrt{x}`, `\pi`, `\le`…) are shown as normal characters (a/b, x², √x, π, ≤) instead of LaTeX code. Code and prices are left alone.
+- A reply that arrives as an escaped string (showing `\n\n` and `\``) is now shown as the paragraphs it was meant to be.

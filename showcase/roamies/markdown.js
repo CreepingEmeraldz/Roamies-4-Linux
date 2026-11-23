@@ -8,6 +8,89 @@
 (() => {
   const SAFE_LINK = /^(https?:\/\/|mailto:)/i;
 
+
+  // ---------- maths and stray escapes ----------
+  // The bubbles are a dot-grid font with no room for layout, so maths is written with Unicode instead of LaTeX:
+  // $\frac{a}{b}$ -> a/b, x^{2} -> x², \sqrt{x} -> √x, \alpha -> α. Code is left exactly as written.
+  const SUP = { 0: '⁰', 1: '¹', 2: '²', 3: '³', 4: '⁴', 5: '⁵', 6: '⁶', 7: '⁷', 8: '⁸', 9: '⁹', '+': '⁺', '-': '⁻', '=': '⁼', '(': '⁽', ')': '⁾', n: 'ⁿ', i: 'ⁱ' };
+  const SUB = { 0: '₀', 1: '₁', 2: '₂', 3: '₃', 4: '₄', 5: '₅', 6: '₆', 7: '₇', 8: '₈', 9: '₉', '+': '₊', '-': '₋', '=': '₌', '(': '₍', ')': '₎', a: 'ₐ', e: 'ₑ', o: 'ₒ', x: 'ₓ', h: 'ₕ', k: 'ₖ', l: 'ₗ', m: 'ₘ', n: 'ₙ', p: 'ₚ', s: 'ₛ', t: 'ₜ' };
+  const SYMS = {
+    alpha: 'α', beta: 'β', gamma: 'γ', delta: 'δ', epsilon: 'ε', varepsilon: 'ε', zeta: 'ζ', eta: 'η', theta: 'θ', iota: 'ι', kappa: 'κ', lambda: 'λ', mu: 'μ', nu: 'ν', xi: 'ξ', pi: 'π', rho: 'ρ', sigma: 'σ', tau: 'τ', phi: 'φ', varphi: 'φ', chi: 'χ', psi: 'ψ', omega: 'ω',
+    Gamma: 'Γ', Delta: 'Δ', Theta: 'Θ', Lambda: 'Λ', Xi: 'Ξ', Pi: 'Π', Sigma: 'Σ', Phi: 'Φ', Psi: 'Ψ', Omega: 'Ω',
+    times: '×', cdot: '·', div: '÷', pm: '±', mp: '∓', le: '≤', leq: '≤', ge: '≥', geq: '≥', ne: '≠', neq: '≠', approx: '≈', equiv: '≡', sim: '∼', propto: '∝',
+    infty: '∞', partial: '∂', nabla: '∇', sum: '∑', prod: '∏', int: '∫', to: '→', rightarrow: '→', leftarrow: '←', Rightarrow: '⇒', Leftarrow: '⇐', leftrightarrow: '↔', Leftrightarrow: '⇔', implies: '⇒', iff: '⇔', mapsto: '↦',
+    in: '∈', notin: '∉', subset: '⊂', subseteq: '⊆', cup: '∪', cap: '∩', emptyset: '∅', forall: '∀', exists: '∃', neg: '¬', land: '∧', lor: '∨', circ: '∘', degree: '°', ldots: '…', cdots: '⋯', dots: '…', angle: '∠', perp: '⊥', parallel: '∥',
+    log: 'log', ln: 'ln', sin: 'sin', cos: 'cos', tan: 'tan', lim: 'lim', max: 'max', min: 'min', exp: 'exp', det: 'det',
+  };
+  const GREEK = new Set('alpha beta gamma delta epsilon varepsilon zeta eta theta iota kappa lambda mu nu xi pi rho sigma tau phi varphi chi psi omega Gamma Delta Theta Lambda Xi Pi Sigma Phi Psi Omega'.split(' '));
+  const script = (s, map) => { const o = [...s].map((c) => map[c]); return o.every(Boolean) ? o.join('') : null; };
+  // The text inside the {…} that opens at s[i] (i is the index of "{"), and where it ends; null if it doesn't close.
+  const group = (s, i) => {
+    let d = 0;
+    for (let j = i; j < s.length; j++) {
+      if (s[j] === '{') d++;
+      else if (s[j] === '}' && --d === 0) return [s.slice(i + 1, j), j + 1];
+    }
+    return null;
+  };
+  const wrapIf = (t) => (/^[\w.√π]+$/u.test(t) ? t : `(${t})`);
+  function tex(src) {
+    let s = src;
+    for (let pass = 0; pass < 6; pass++) {
+      const before = s;
+      // \frac{a}{b}, \sqrt{x}, \sqrt[n]{x}, \text{…}
+      let out = '', i = 0;
+      while (i < s.length) {
+        const rest = s.slice(i);
+        let m;
+        if ((m = /^\\(?:d|t)?frac\s*\{/.exec(rest))) {
+          const a = group(s, i + m[0].length - 1);
+          const b = a && s[a[1]] === '{' ? group(s, a[1]) : null;
+          if (a && b) { out += `${wrapIf(tex(a[0]))}/${wrapIf(tex(b[0]))}`; i = b[1]; continue; }
+        } else if ((m = /^\\sqrt\s*(?:\[([^\]]*)\])?\s*\{/.exec(rest))) {
+          const a = group(s, i + m[0].length - 1);
+          if (a) { const r = tex(a[0]); out += `${m[1] === '3' ? '∛' : m[1] === '4' ? '∜' : '√'}${wrapIf(r)}`; i = a[1]; continue; }
+        } else if ((m = /^\\(?:text|textbf|mathrm|mathbf|mathit|mathbb|operatorname|boldsymbol|mathcal|rm|bf)\s*\{/.exec(rest))) {
+          const a = group(s, i + m[0].length - 1);
+          if (a) { out += tex(a[0]); i = a[1]; continue; }
+        } else if ((m = /^([\^_])\{/.exec(rest))) {
+          const a = group(s, i + 1);
+          if (a) { const inner = tex(a[0]); out += script(inner, m[1] === '^' ? SUP : SUB) ?? `${m[1]}(${inner})`; i = a[1]; continue; }
+        } else if ((m = /^([\^_])([0-9a-zA-Z])/.exec(rest))) {
+          out += script(m[2], m[1] === '^' ? SUP : SUB) ?? m[0]; i += 2; continue;
+        }
+        out += s[i]; i++;
+      }
+      s = out;
+      if (s === before) break;
+    }
+    return s
+      .replace(/\\(left|right|big|Big|bigg|Bigg)\b\s*([()[\]|.]?)/g, (m, w, d) => (d === '.' ? '' : d))
+      // A space after a Greek letter only ends the command (\pi r is πr); after any other symbol it stays (a \times b).
+      .replace(/\\([A-Za-z]+)( ?)(?=[A-Za-z0-9]?)/g, (m, w, sp, at, str) => (SYMS[w] ? SYMS[w] + (GREEK.has(w) && /[A-Za-z0-9]/.test(str[at + m.length] ?? '') ? '' : sp) : m))
+      .replace(/\\[,;:! ]/g, ' ').replace(/\\\\/g, ' ').replace(/\\([{}%$&#_])/g, '$1')
+      .replace(/[{}]/g, '').replace(/ {2,}/g, ' ').trim();
+  }
+  // Delimited maths ($…$, $$…$$, \(…\), \[…\]) and bare commands, outside code.
+  const KNOWN = new RegExp(`\\\\(?:${Object.keys(SYMS).join('|')}|d?frac|sqrt|left|right|text|mathrm|mathbf|operatorname)(?![A-Za-z])`);
+  function mathPart(t) {
+    t = t.replace(/\$\$([\s\S]+?)\$\$/g, (m, a) => tex(a))
+      .replace(/\\\[([\s\S]+?)\\\]/g, (m, a) => tex(a))
+      .replace(/\\\(([\s\S]+?)\\\)/g, (m, a) => tex(a))
+      // $x^2$ — but not prices: "$5 and $10" has a space before its closing $, "$5.50" has no closing one
+      .replace(/(?<![\\$\w])\$(?=[^\s$])([^$\n]*?[^\s$\\])\$(?![\w$])/g, (m, a) => (/^\d[\d,.]*$/.test(a) ? m : tex(a)));
+    return KNOWN.test(t) ? tex(t) : t;
+  }
+  // Models sometimes send their reply as an escaped string: \n for a new line, \" and \` for quotes. With no real new
+  // line in it but several written-out ones, that is what happened (a real "\n" in prose is rare, and in code it stays).
+  const unescape = (t) => (!t.includes('\n') && /\\n\\n|\\n[-*#\d]/.test(t) ? t.replace(/\\n/g, '\n').replace(/\\t/g, '  ').replace(/\\(["'`])/g, '$1') : t);
+  function tidy(text) {
+    let t = unescape(String(text ?? ''));
+    if (!/[\\$]/.test(t)) return t;
+    // Leave fenced and `inline` code alone.
+    return t.split(/(```[\s\S]*?(?:```|$)|`[^`\n]*`)/).map((p, k) => (k % 2 ? p : mathPart(p))).join('');
+  }
+
   // ---------- inline ----------
   // Spans: { t: 'text', s } | { t: 'code', s } | { t: 'b' | 'i' | 's', c: spans } | { t: 'a', href, c: spans }
   const INLINE = [
@@ -50,7 +133,7 @@
   const isTableSep = (l) => /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/.test(l);
 
   function blocks(text) {
-    const lines = String(text ?? '').replace(/\r/g, '').split('\n');
+    const lines = tidy(text).replace(/\r/g, '').split('\n');
     const out = [];
     let i = 0, lead = false;
     const para = [];
@@ -152,7 +235,7 @@
         else walk(sp.c, st | (sp.t === 'b' ? BOLD : sp.t === 'i' ? ITAL : 0));
       }
     };
-    const lines = String(text ?? '').replace(/\r/g, '').split('\n');
+    const lines = tidy(text).replace(/\r/g, '').split('\n');
     let inCode = false;
     lines.forEach((raw, n) => {
       if (n) put('\n', 0);
