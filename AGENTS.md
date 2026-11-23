@@ -23,7 +23,9 @@ cursor as metadata, discards the pictures and prints the cursor's position (`ROA
 the raw numbers; its tests run anywhere with libpipewire-dev). The sidecar then offers the Cursor size
 (`ROAMIES_POINTER=1`), though still not click or hover waits. niri sends the cursor as metadata only with PipeWire 1.4.8 or
 newer (older ones draw it into the picture), so `roamies-pointer --check` fails on those and the Cursor size isn't offered. Debug aids: `ROAMIES_TRACE=1` prints the
-overlay's click areas, and in debug builds `ROAMIES_TEST_AUDIO=<wav>` stands in for the microphone.
+overlay's click areas, and in debug builds `ROAMIES_TEST_AUDIO=<wav>` stands in for the microphone. Upstream also ships a Hyprland-only Python hands helper (`src-tauri/hands-linux/roamies-hands`) and a separate
+layer-shell host (`src/bin/roamies-overlay.rs`); this fork reads and works apps through `roamies-atspi` on every desktop and
+uses its own `layer.rs` overlay, so on Linux the sidecar doesn't use the Python helper and the host is never started.
 
 ## Commands
 
@@ -46,7 +48,8 @@ stopping the release; `latest.json` lists Linux only when its AppImage is there.
 
 - Every tool that touches files, commands, URLs or other apps goes through `showcase/tauri/sidecar/safety.mjs`
   (tested in `test/safety.test.mjs`); the hands helpers also refuse to type or click in the apps in `HANDS_OFF`
-  (by bundle id in `hands/main.swift`, by program name in `hands-win/src/logic.rs`).
+  (by bundle id in `hands/main.swift`, by program name in `hands-win/src/logic.rs`, by program or window class in
+  `hands-linux/roamies-hands`).
   Add a test case with every rule change.
 - In-app updates read `latest.json` from the newest published release, signed with the key in the
   `TAURI_SIGNING_PRIVATE_KEY` secret. Keep `plugins.updater.pubkey` in `tauri.conf.json` matching it.

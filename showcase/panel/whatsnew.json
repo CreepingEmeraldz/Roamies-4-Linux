@@ -1,6 +1,19 @@
 {
   "updates": [
     {
+      "version": "0.1.51",
+      "date": "2026-11-24",
+      "items": [
+        { "kind": "new", "title": "Hands on Hyprland", "text": "On Hyprland I can read your windows, and click and type in apps. Thanks Breadway!" },
+        { "kind": "fixed", "title": "Overlay on Hyprland", "text": "On Hyprland I float over your apps and clicks go through to them. Thanks Breadway!" },
+        { "kind": "new", "title": "Pin me in one place", "text": "Ask me to stay in a corner and I stop following your cursor. Thanks Breadway!" },
+        { "kind": "new", "title": "Tokens on Home", "text": "Home shows the tokens you used today and over the last week. Thanks Breadway!" },
+        { "kind": "improved", "title": "Approvals per connection", "text": "Each connection can ask every time or always be allowed. Risky tools still ask." },
+        { "kind": "fixed", "title": "Open at Login on Linux", "text": "Moved or renamed the AppImage? I still start when you log in. Thanks sakartvelo11!" },
+        { "kind": "fixed", "title": "The voice you picked", "text": "After a Fish Audio hiccup, I go back to the voice model you chose. Thanks bschwar9!" }
+      ]
+    },
+    {
       "version": "0.1.50",
       "date": "2026-11-23",
       "items": [

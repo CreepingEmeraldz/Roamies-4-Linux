@@ -1,0 +1,2244 @@
+#!/usr/bin/env python3
+"""Linux hands helper for Roamies: see one window or app, read its controls, work them.
+
+Speaks the same command language as hands/main.swift and hands-win:
+  windows | front | locate <target> | capture <out> <target> [max] [thumb thumbMax]
+  ui <target> [controls] | locate-control <target> <id> | find-text <target> <text> [scroll]
+  ocr-find <target> <text> [all] | refine '[[x,y,w,h],...]' [window:<id>]
+  act <json> | tab <json> | wm <json> | pointer <json> | select <out>
+  trusted | guide | screencheck | selftest-type | selftest-drag | selftest-safety
+One JSON object on stdout; live progress lines start with "@" on stderr.
+
+Windows come from Hyprland. Controls and text come from AT-SPI, with OCR of the window
+screenshot as a fallback. Clicks, keys and scrolling go through ydotool; typing uses
+ydotool for ASCII and wtype for anything else.
+"""
+
+import fcntl
+import glob
+import json
+import os
+import re
+import struct
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+
+try:
+    import lz4.block
+except Exception:
+    lz4 = None
+
+# ---------------------------------------------------------------- helpers
+
+
+def sh(cmd, **kw):
+    return subprocess.run(cmd, capture_output=True, text=True, **kw)
+
+
+def sh_out(cmd):
+    r = sh(cmd)
+    return r.stdout if r.returncode == 0 else ""
+
+
+def hypr(kind):
+    try:
+        return json.loads(sh_out(["hyprctl", kind, "-j"]) or "{}")
+    except Exception:
+        return {}
+
+
+def monitors():
+    return hypr("monitors") or []
+
+
+def clients():
+    return [c for c in (hypr("clients") or []) if c.get("mapped", True)]
+
+
+def is_roamies(app, title=""):
+    a = (app or "").lower()
+    return a in ("roamies", "roamies-overlay") or (title or "").lower().startswith("roamies")
+
+
+def exe_for(pid):
+    try:
+        return os.readlink(f"/proc/{pid}/exe")
+    except Exception:
+        return ""
+
+
+def scale_for(bounds):
+    x, y, w, h = bounds
+    cx, cy = x + w / 2, y + h / 2
+    for m in monitors():
+        mx, my = m.get("x", 0), m.get("y", 0)
+        mw, mh = m.get("width", 0), m.get("height", 0)
+        if mx <= cx <= mx + mw and my <= cy <= my + mh:
+            return float(m.get("scale", 1) or 1)
+    return 1.0
+
+
+ZEN_CACHE = {"key": None, "data": None}
+
+
+def is_zen(win):
+    """Zen, and only Zen: "zenity" also starts with zen, but has no session store."""
+    app = (win.get("app") or "").strip().lower()
+    exe = (win.get("exe") or "").strip().lower()
+    return app in ("zen", "zen browser") or "zen-bin" in exe or "zen-browser" in exe or "/zen/" in exe
+
+
+def norm_uuid(u):
+    return str(u or "").strip("{}").lower()
+
+
+def zen_recovery():
+    # ROAMIES_ZEN_PROFILE points at a test profile, so testing never reads or acts on the live browser's store.
+    env = os.environ.get("ROAMIES_ZEN_PROFILE")
+    if env:
+        p = os.path.join(os.path.expanduser(env), "sessionstore-backups", "recovery.jsonlz4")
+        if os.path.exists(p):
+            return p
+    files = glob.glob(os.path.expanduser("~/.config/zen/*/sessionstore-backups/recovery.jsonlz4"))
+    files = [f for f in files if os.path.exists(f)]
+    return max(files, key=os.path.getmtime) if files else None
+
+
+def zen_pref_active(path):
+    try:
+        text = open(os.path.join(os.path.dirname(os.path.dirname(path)), "prefs.js"), encoding="utf-8", errors="ignore").read()
+        m = re.search(r'user_pref\(\s*"zen\.workspaces\.active"\s*,\s*"([^"]+)"', text)
+        return norm_uuid(m.group(1)) if m else None
+    except Exception:
+        return None
+
+
+def zen_state():
+    """The active Zen workspace and each workspace's tabs, from the session store.
+
+    Zen keeps this in sessionstore-backups/recovery.jsonlz4 (mozLz4 JSON): windows[].spaces
+    holds the workspace records, activeZenSpace is the selected one, and every tab carries
+    zenWorkspace. prefs.js (zen.workspaces.active) is only a hint, since it flushes late.
+    """
+    if lz4 is None:
+        return None
+    path = zen_recovery()
+    if not path:
+        return None
+    try:
+        key = (path, os.path.getmtime(path), os.path.getsize(path))
+    except Exception:
+        key = (path, 0, 0)
+    if ZEN_CACHE["key"] == key:
+        return ZEN_CACHE["data"]
+    try:
+        data = open(path, "rb").read()
+        if data[:8] != b"mozLz40\0":
+            return None
+        size = int.from_bytes(data[8:12], "little")
+        doc = json.loads(lz4.block.decompress(data[12:], uncompressed_size=size))
+    except Exception:
+        return None
+    wins = doc.get("windows") or []
+    win = next((w for w in wins if w.get("spaces") or w.get("activeZenSpace")), wins[0] if wins else None)
+    if not win:
+        return None
+    spaces, order = {}, []
+    for sp in win.get("spaces") or []:
+        u = norm_uuid(sp.get("uuid"))
+        spaces[u] = {"uuid": u, "name": sp.get("name") or "Untitled", "active": False, "tabs": []}
+        order.append(u)
+    active = norm_uuid(win.get("activeZenSpace")) or zen_pref_active(path)
+    if active in spaces:
+        spaces[active]["active"] = True
+    try:
+        selected = int(win.get("selected") or 0)
+    except Exception:
+        selected = 0
+    for pos, tab in enumerate(win.get("tabs") or [], 1):
+        u = norm_uuid(tab.get("zenWorkspace"))
+        if u not in spaces:
+            u = "essentials" if tab.get("zenEssential") else "other"
+            if u not in spaces:
+                spaces[u] = {"uuid": u, "name": "Essentials" if u == "essentials" else "Unassigned", "active": False, "tabs": []}
+                order.append(u)
+        entry = (tab.get("entries") or [{}])[-1]
+        title = entry.get("title") or entry.get("url") or tab.get("userTypedValue") or ""
+        spaces[u]["tabs"].append({
+            "title": str(title)[:120],
+            "url": str(entry.get("url") or "")[:200],
+            "pinned": bool(tab.get("pinned")),
+            "essential": bool(tab.get("zenEssential")),
+            "current": bool(selected and pos == selected),
+        })
+    res = {"active": spaces[active]["name"] if active in spaces else None, "selected": selected, "spaces": [spaces[u] for u in order], "source": path}
+    ZEN_CACHE["key"], ZEN_CACHE["data"] = key, res
+    return res
+
+ZEN_SUFFIX = re.compile(r"\s+[\u2014\u2013-]\s+Zen Browser\s*$")
+
+
+def norm_title(t):
+    return " ".join(str(t or "").split()).lower()
+
+
+def norm_url(u):
+    u = re.sub(r"#.*$", "", str(u or "").strip())
+    return u.rstrip("/").lower()
+
+
+def url_host(u):
+    m = re.match(r"^[a-z][a-z0-9+.-]*://([^/]+)", str(u or ""), re.I)
+    return m.group(1).lower() if m else ""
+
+
+def title_words(t):
+    return [w for w in re.split(r"[^0-9a-z]+", norm_title(t)) if len(w) > 1]
+
+
+def title_match(a, b):
+    """Whether a stored tab title still describes the live one: Zen's saved titles drift (a page adds its site
+    name, or drops a leading section such as "Home ―"), or a redirect changes it. Compare the main section too."""
+    na, nb = norm_title(a), norm_title(b)
+    if not na or not nb:
+        return False
+    if na == nb:
+        return True
+    if na in nb or nb in na:
+        return min(len(na), len(nb)) >= 6
+    def core(t):
+        parts = [x.strip() for x in re.split(r"\s+[\|\u2014\u2013-]\s+", norm_title(t)) if x.strip()]
+        return max(parts, key=len) if parts else ""
+    ca, cb = core(a), core(b)
+    if ca and cb and (ca == cb or ca in cb or cb in ca) and min(len(ca), len(cb)) >= 5:
+        return True
+    wa, wb = set(title_words(a)), set(title_words(b))
+    if not wa or not wb:
+        return False
+    return len(wa & wb) / min(len(wa), len(wb)) >= 0.7
+
+
+def url_close(a, b):
+    """Same page even if the query or fragment changed: same scheme, host and path."""
+    def clean(u):
+        u = re.sub(r"[?#].*$", "", str(u or "").strip()).rstrip("/").lower()
+        return u
+    ca, cb = clean(a), clean(b)
+    return bool(ca) and ca == cb
+
+
+def active_title(win):
+    """This window's title, if it is the focused window (after acting, to read back what changed)."""
+    a = hypr("activewindow") or {}
+    if str(a.get("address", "")).lower() != str(win.get("id", "")).lower():
+        return None
+    return str(a.get("title") or "").strip()
+
+
+def zen_active_title(win):
+    """The title of the selected tab in this Zen window, or None if Zen isn't the focused window."""
+    t = active_title(win)
+    return ZEN_SUFFIX.sub("", t).strip() if t is not None else None
+
+
+def clip_text():
+    if not shutil.which("wl-paste"):
+        return None
+    try:
+        r = subprocess.run(["wl-paste", "--no-newline"], capture_output=True, text=True, timeout=2)
+        return r.stdout if r.returncode == 0 else None
+    except Exception:
+        return None
+
+
+def copy_active_url(win):
+    """The selected tab's address, read through the browser: Ctrl+L selects the address, Ctrl+C copies it.
+    An unchanged clipboard means the copy didn't take (a new tab with no address), not that the old URL is
+    still the page, so that reads as unknown."""
+    prev = clip_text()
+    press_combo("ctrl+l")
+    time.sleep(0.25)
+    press_combo("ctrl+c")
+    time.sleep(0.18)
+    press_combo("escape")
+    time.sleep(0.12)
+    u = (clip_text() or "").strip()
+    # Put back whatever they had on the clipboard before the copy.
+    if prev is not None and shutil.which("wl-copy"):
+        sh(["wl-copy", "--", prev])
+    if u and u == prev:
+        return ""
+    return u
+
+
+def zen_tab_controls(z, active_title=None):
+    """One control per tab: its workspace, title (label) and address (value), so a tab can be picked by id."""
+    out = []
+    at = norm_title(active_title)
+    for sp in z.get("spaces") or []:
+        for n, t in enumerate(sp.get("tabs") or [], 1):
+            c = {
+                "role": "tab",
+                "label": f"{sp['name']} \u00b7 {t.get('title') or '(untitled)'}"[:120],
+                "value": str(t.get("url") or "")[:300],
+                "workspace": sp["name"],
+                "title": t.get("title") or "",
+                "url": t.get("url") or "",
+                "num": n,
+                "current": bool(title_match(t.get("title"), active_title)) if at else bool(t.get("current")),
+            }
+            out.append(c)
+    return out
+
+
+def zen_find_space(z, name):
+    if not name:
+        return None
+    q = str(name).strip().lower()
+    for sp in z.get("spaces") or []:
+        if sp["name"].lower() == q or sp["uuid"].startswith(q) or q in sp["name"].lower():
+            return sp
+    return None
+
+
+def zen_pick(z, workspace=None, index=None, text=None, url=None):
+    spaces = list(z.get("spaces") or [])
+    if workspace:
+        wl = workspace.strip().lower()
+        spaces = [sp for sp in spaces if sp["name"].lower() == wl or sp["uuid"].startswith(wl) or wl in sp["name"].lower()]
+        if not spaces:
+            names = ", ".join(sp["name"] for sp in z.get("spaces") or [])
+            fail(f"There's no Zen workspace called {workspace}. The workspaces are: {names}.")
+    if workspace and index is None and not text and not url:
+        sp = spaces[0]
+        tabs = sp.get("tabs") or []
+        if not tabs:
+            fail(f"{sp['name']} has no tabs to show.")
+        return sp, next((t for t in tabs if t.get("current")), tabs[0])
+    if index is not None:
+        sp = next((x for x in spaces if x.get("active")), spaces[0] if len(spaces) == 1 else None)
+        if sp is None:
+            names = ", ".join(x["name"] for x in spaces)
+            fail(f"Say which workspace the tab number is in ({names}).")
+        try:
+            i = int(index) - 1
+        except Exception:
+            fail("The tab number must be a whole number.")
+        if not (0 <= i < len(sp.get("tabs") or [])):
+            fail(f"{sp['name']} has {len(sp.get('tabs') or [])} tabs, so #{index} is out of range.")
+        return sp, sp["tabs"][i]
+    matches = []
+    q = str(text or "").strip().lower()
+    qhost = re.sub(r"^[a-z][a-z0-9+.-]*://", "", q).split("/")[0] if q else ""
+    if qhost in ("http:", "https:"):
+        qhost = ""
+    for sp in spaces:
+        for t in sp.get("tabs") or []:
+            if url and norm_url(t.get("url")) == norm_url(url):
+                matches.append((sp, t))
+            elif text and (q in (t.get("title") or "").lower() or q in (t.get("url") or "") or title_match(t.get("title"), text)
+                           or (qhost and "." in qhost and url_host(t.get("url")) == qhost)):
+                matches.append((sp, t))
+    if not matches:
+        what = text or url
+        fail(f"No Zen tab matches {what!r}. Read the window again to see the tabs.")
+    matches.sort(key=lambda m: (m[0].get("active") is not True, not title_match(m[1].get("title"), text or ""), ) if text else (m[0].get("active") is not True,))
+    return matches[0]
+
+
+def zen_locate_current(z, win):
+    """Which workspace the selected tab is in, read from the browser itself (its address, then its title)."""
+    u = copy_active_url(win)
+    title = zen_active_title(win)
+    nu = norm_url(u)
+    if nu and nu != "about:blank":
+        hit = [sp for sp in z.get("spaces") or [] if any(norm_url(t.get("url")) == nu for t in sp.get("tabs") or [])]
+        if len(hit) == 1:
+            return hit[0]
+    if title:
+        hit = [sp for sp in z.get("spaces") or [] if any(norm_title(t.get("title")) == norm_title(title) for t in sp.get("tabs") or [])]
+        if len(hit) == 1:
+            return hit[0]
+    return None
+
+
+def zen_current_space(z, win):
+    """The workspace showing now: the selected tab's address or title, else the pref hint Zen flushes (which is
+    often newer than the session store), else the store's idea."""
+    cur = zen_locate_current(z, win)
+    if cur:
+        return cur
+    hint = zen_pref_active(z.get("source") or zen_recovery() or "")
+    if hint:
+        for sp in z.get("spaces") or []:
+            if sp["uuid"] == hint:
+                return sp
+    return next((sp for sp in z.get("spaces") or [] if sp.get("active")), None)
+
+
+def zen_switch_space(z, win, target):
+    cur = zen_current_space(z, win)
+    if cur and cur["uuid"] == target["uuid"]:
+        return True
+    order = [sp["uuid"] for sp in z.get("spaces") or []]
+    if not cur or cur["uuid"] not in order or target["uuid"] not in order:
+        return False
+    steps = (order.index(target["uuid"]) - order.index(cur["uuid"])) % len(order)
+    left = (len(order) - steps) % len(order)
+    key = "right" if steps <= left else "left"
+    for _ in range(min(steps, left)):
+        press_combo(f"ctrl+alt+{key}")
+        time.sleep(0.35)
+    # The steps are deterministic from a known space. Check the selected tab's title against the target's tabs;
+    # if that can't tell (a new tab), the address; either way do not wander through every workspace on a maybe.
+    t = zen_active_title(win) or ""
+    if t and any(title_match(tab.get("title"), t) for tab in target.get("tabs") or []):
+        return True
+    now = zen_locate_current(z, win)
+    if now and now["uuid"] == target["uuid"]:
+        return True
+    return True
+
+
+def zen_switch_space_from(z, win, current, target):
+    """Switch by the spaces' sidebar order, from a known space. Used after opening a tab the store doesn't
+    know yet, when the selected tab's address can't be found in the store."""
+    order = [sp["uuid"] for sp in z.get("spaces") or []]
+    if current.get("uuid") not in order or target.get("uuid") not in order:
+        return False
+    steps = (order.index(target["uuid"]) - order.index(current["uuid"])) % len(order)
+    left = (len(order) - steps) % len(order)
+    key = "right" if steps <= left else "left"
+    for _ in range(min(steps, left)):
+        press_combo(f"ctrl+alt+{key}")
+        time.sleep(0.35)
+    return True
+
+
+def zen_tab_report(space, tab, url, switched, live_title=None):
+    where = f" in {space['name']}" if space.get("uuid") != "essentials" else " (an essential tab)"
+    title = live_title or tab.get("title") or "(untitled)"
+    what = f"switched to tab \"{title}\"{where}" if switched else f"tab \"{title}\" was already active{where}"
+    return f"{what} ({url or tab.get('url') or 'no address'})"
+
+
+def zen_activate_tab(win, workspace=None, index=None, text=None, url=None):
+    """Switch to a Zen tab through the browser, never by clicking the sidebar: pick the workspace, then cycle
+    tabs with Ctrl+Tab until the selected tab's own title and address are the ones asked for."""
+    z = zen_state()
+    if not z:
+        fail("Zen's session store couldn't be read, so its tabs aren't known. Is Zen open?")
+    space, tab = zen_pick(z, workspace, index, text, url)
+    want_t, want_u = tab.get("title") or "", tab.get("url") or ""
+    if space.get("uuid") != "essentials" and not zen_switch_space(z, win, space):
+        fail(f"Couldn't switch Zen to the {space['name']} workspace (it may have no tabs, or the browser kept focus). Ask the user to click the workspace once, then try again.")
+    cur_t = zen_active_title(win)
+    if cur_t is None:
+        fail("Zen isn't the focused window, so the tab can't be checked. Ask the user to click it, then try again.")
+    cur_u = copy_active_url(win)
+    if title_match(cur_t, want_t) and (not want_u or norm_url(cur_u) == norm_url(want_u) or url_close(cur_u, want_u)):
+        return zen_tab_report(space, tab, cur_u, False, cur_t)
+    total = max(len(space.get("tabs") or []), 1) + 6
+    for _ in range(total):
+        if not press_combo("ctrl+tab"):
+            fail("Couldn't press Ctrl+Tab.")
+        time.sleep(0.22)
+        cur_t = zen_active_title(win)
+        if cur_t is None:
+            fail("Zen lost focus while switching tabs. Ask the user to click its window, then try again.")
+        if title_match(cur_t, want_t):
+            cur_u = copy_active_url(win)
+            if not want_u or norm_url(cur_u) == norm_url(want_u) or url_close(cur_u, want_u):
+                return zen_tab_report(space, tab, cur_u, True, cur_t)
+    fail(f"Couldn't reach the tab \"{want_t}\" in {space['name']} (cycled {total - 6} tabs). Read the window again to see its tabs.")
+
+
+def zen_open_tab(win, url, workspace=None):
+    """Open a web address as a new tab in a chosen workspace, then check the tab reached it."""
+    u = str(url or "").strip()
+    if not u:
+        fail("Give a web address to open.")
+    if not re.match(r"^[a-z][a-z0-9+.-]*://", u, re.I):
+        u = "https://" + u.lstrip("/")
+    if not re.match(r"^https?://[^\s]+$", u, re.I):
+        fail(f"{url!r} isn't a web address (http or https).")
+    z = zen_state()
+    space = None
+    if workspace:
+        space = zen_find_space(z, workspace) if z else None
+        if not space:
+            fail(f"There's no Zen workspace called {workspace}.")
+        if space.get("uuid") != "essentials" and not zen_switch_space(z, win, space):
+            fail(f"Couldn't switch Zen to the {space['name']} workspace.")
+    host = url_host(u)
+    press_combo("ctrl+t")
+    time.sleep(0.45)
+    press_combo("ctrl+l")
+    time.sleep(0.2)
+    if not type_text(u):
+        fail("Couldn't type the address.")
+    time.sleep(0.1)
+    press_combo("return")
+    cur, title = "", ""
+    for _ in range(24):
+        time.sleep(0.35)
+        cur = copy_active_url(win)
+        title = zen_active_title(win) or ""
+        if cur and (norm_url(cur) == norm_url(u) or (host and host == url_host(cur))):
+            where = space["name"] if space else ((z or {}).get("active") or "the current workspace")
+            return f"opened tab \"{title}\" ({cur}) in {where}"
+    fail(f"The tab opened but never reached {u} (now \"{title}\" — {cur or 'no address'}).")
+
+
+def zen_close_tab(win, workspace=None, index=None, text=None, url=None):
+    """Close one tab, by switching to it through the browser first (never by clicking the sidebar)."""
+    z = zen_state()
+    if not z:
+        fail("Zen's session store couldn't be read, so its tabs aren't known.")
+    # A tab opened this second may not be in the store yet: if the tab showing now is the one asked for, close it.
+    if not workspace and index is None:
+        cur_u = copy_active_url(win)
+        cur_t = zen_active_title(win) or ""
+        direct = (url and norm_url(cur_u) == norm_url(url)) or (not url and text and (str(text).lower() in cur_t.lower() or title_match(cur_t, text)))
+        active_space = next((sp for sp in z.get("spaces") or [] if sp.get("active")), None)
+        if direct:
+            if active_space and len(active_space.get("tabs") or []) <= 1:
+                fail(f"\"{cur_t}\" looks like the only tab in {active_space['name']}; closing it would close the window.")
+            time.sleep(0.2)
+            press_combo("ctrl+w")
+            time.sleep(0.6)
+            now_t = zen_active_title(win) or ""
+            now_u = copy_active_url(win)
+            return f"closed tab \"{cur_t}\" ({cur_u}); now showing \"{now_t}\" ({now_u or 'no address'})"
+    space, tab = zen_pick(z, workspace, index, text, url)
+    if len(space.get("tabs") or []) <= 1:
+        fail(f"\"{tab.get('title')}\" is the only tab in {space['name']}; closing it would close the window.")
+    zen_activate_tab(win, space["name"], None, tab.get("title"), tab.get("url"))
+    time.sleep(0.2)
+    press_combo("ctrl+w")
+    time.sleep(0.6)
+    cur_t = zen_active_title(win) or ""
+    cur_u = copy_active_url(win)
+    return f"closed tab \"{tab.get('title')}\" ({tab.get('url')}); now showing \"{cur_t}\" ({cur_u or 'no address'})"
+
+
+def zen_move_tab(win, workspace, to, index=None, text=None, url=None):
+    """Move a tab to another workspace by reopening it there through the browser, then closing the original.
+    Zen's tab context menu is chrome-only, so there is no pointer-free in-place move."""
+    z = zen_state()
+    if not z:
+        fail("Zen's session store couldn't be read, so its tabs aren't known.")
+    cur_u = copy_active_url(win)
+    cur_t = zen_active_title(win) or ""
+    try:
+        src, tab = zen_pick(z, workspace, index, text, url)
+    except SystemExit:
+        # Opened moments ago, so not in the store yet: the tab showing now is the one.
+        match = (url and norm_url(cur_u) == norm_url(url)) or (not url and text and title_match(cur_t, text))
+        src = zen_find_space(z, workspace) if workspace else next((sp for sp in z.get("spaces") or [] if sp.get("active")), None)
+        if not match or not src:
+            raise
+        tab = {"title": cur_t, "url": cur_u}
+    dst = zen_find_space(z, to)
+    if not dst:
+        fail(f"There's no Zen workspace called {to}.")
+    if src.get("uuid") == dst.get("uuid"):
+        return f"\"{tab.get('title')}\" is already in {src['name']}."
+    if len(src.get("tabs") or []) <= 1:
+        fail(f"\"{tab.get('title')}\" is the only tab in {src['name']}; moving it would close the window.")
+    zen_activate_tab(win, src["name"], None, tab.get("title"), tab.get("url"))
+    u = copy_active_url(win) or tab.get("url") or ""
+    opened = zen_open_tab(win, u, dst["name"])
+    z2 = zen_state() or z
+    src2 = zen_find_space(z2, src["name"]) or src
+    dst2 = zen_find_space(z2, dst["name"]) or dst
+    if not zen_switch_space_from(z2, win, dst2, src2) and not zen_switch_space(z2, win, src2):
+        return f"{opened}, but couldn't switch back to {src['name']} to close the original; close it there."
+    # The source tab may be the one still showing (a just-opened tab isn't in the store), or a stored one.
+    if norm_url(copy_active_url(win)) != norm_url(tab.get("url") or u):
+        zen_activate_tab(win, src2["name"], None, tab.get("title"), tab.get("url") or u)
+    time.sleep(0.2)
+    press_combo("ctrl+w")
+    time.sleep(0.6)
+    cur_t = zen_active_title(win) or ""
+    return f"moved \"{tab.get('title')}\" from {src['name']} to {dst['name']} (reopened as {u}; {src['name']} now shows \"{cur_t}\")"
+
+
+def zen_workspace_create(win, name=None):
+    fail("Zen doesn't expose creating a workspace to scripts: its New Workspace dialog is chrome-only, and writing the "
+         "session store would be overwritten by the running browser. Create it once in Zen's sidebar, then I can see and use it.")
+
+
+def zen_workspace_rename(win, current, name):
+    fail("Zen doesn't expose renaming a workspace to scripts: the name is only editable in its sidebar or session store, "
+         "which the running browser overwrites. Rename it once in Zen's sidebar, then I can use the new name.")
+
+
+def win_info(c, front_pid=None):
+    x, y = c.get("at", [0, 0])
+    w, h = c.get("size", [0, 0])
+    app = c.get("class") or c.get("initialClass") or ""
+    info = {
+        "id": c.get("address"),
+        "app": app,
+        "exe": exe_for(c.get("pid", 0)),
+        "title": c.get("title") or "",
+        "bounds": [x, y, w, h],
+        "pid": c.get("pid", 0),
+        "xwayland": bool(c.get("xwayland")),
+    }
+    ws = c.get("workspace") or {}
+    info["workspace"] = ws.get("name") or str(ws.get("id"))
+    info["workspaceId"] = ws.get("id")
+    info["fullscreen"] = c.get("fullscreen", 0)
+    info["floating"] = bool(c.get("floating"))
+    info["monitor"] = c.get("monitor")
+    if is_zen({"app": app, "exe": info.get("exe", "")}):
+        z = zen_state()
+        if z:
+            info["zen"] = z
+    if front_pid is not None and c.get("pid") == front_pid:
+        info["frontApp"] = True
+    return info
+
+
+def visible_clients():
+    cs = [c for c in clients() if not is_roamies(c.get("class"), c.get("title")) and c.get("size", [0, 0])[0] > 0]
+    cs.sort(key=lambda c: c.get("focusHistoryID", 999))
+    return cs
+
+
+def front_client():
+    a = hypr("activewindow") or {}
+    if a and not is_roamies(a.get("class"), a.get("title")):
+        return a
+    for c in visible_clients():
+        return c
+    return None
+
+
+# Apps Roamies may point at but never click or type in. Typing into a terminal would run commands past every
+# check, and the others hold passwords or can change the whole desktop. Kept in step with hands-win and hands/main.swift.
+HANDS_OFF = {
+    # terminals and consoles
+    "kitty": "kitty", "alacritty": "Alacritty", "foot": "foot", "wezterm": "WezTerm", "wezterm-gui": "WezTerm",
+    "org.wezfurlong.wezterm": "WezTerm", "konsole": "Konsole", "org.kde.konsole": "Konsole",
+    "gnome-terminal": "GNOME Terminal", "gnome-terminal-server": "GNOME Terminal", "org.gnome.terminal": "GNOME Terminal",
+    "kgx": "GNOME Console", "org.gnome.console": "GNOME Console", "ptyxis": "Ptyxis", "org.gnome.ptyxis": "Ptyxis",
+    "xterm": "xterm", "uxterm": "xterm", "urxvt": "urxvt", "rxvt": "rxvt", "terminator": "Terminator",
+    "tilix": "Tilix", "terminology": "Terminology", "hyper": "Hyper", "tabby": "Tabby", "warp": "Warp",
+    "dev.warp.warp-stable": "Warp", "ghostty": "Ghostty", "com.mitchellh.ghostty": "Ghostty", "rio": "Rio",
+    "com.raphaelamorim.rio": "Rio", "contour": "Contour", "st": "st", "blackbox": "Black Box",
+    "com.raggesilver.blackbox": "Black Box",
+    # password managers and security prompts
+    "1password": "1Password", "onepassword": "1Password", "bitwarden": "Bitwarden",
+    "com.bitwarden.desktop": "Bitwarden", "keepass": "KeePass", "keepassxc": "KeePassXC",
+    "org.keepassxc.keepassxc": "KeePassXC", "seahorse": "Passwords and Keys",
+    "org.gnome.seahorse.application": "Passwords and Keys", "gcr-prompter": "Passwords and Keys",
+    "gnome-keyring": "Passwords and Keys", "kwallet": "KWallet", "kwalletmanager": "KWallet",
+    "org.kde.kwalletmanager": "KWallet", "enpass": "Enpass", "dashlane": "Dashlane",
+    "lastpass": "LastPass", "buttercup": "Buttercup", "polkit": "PolicyKit",
+    "polkit-gnome-authentication-agent-1": "PolicyKit",
+    # system settings, disks and package managers
+    "gnome-control-center": "Settings", "org.gnome.settings": "Settings", "systemsettings": "System Settings",
+    "systemsettings5": "System Settings", "systemsettings6": "System Settings",
+    "org.kde.systemsettings": "System Settings", "gparted": "GParted", "gnome-disks": "Disks",
+    "org.gnome.disks": "Disks", "blivet-gui": "Blivet", "gnome-software": "Software",
+    "org.gnome.software": "Software", "plasma-discover": "Discover", "org.kde.discover": "Discover",
+    "pamac-manager": "Pamac", "synaptic": "Synaptic", "octopi": "Octopi", "flatseal": "Flatseal",
+    "com.github.tchx84.flatseal": "Flatseal",
+    # editors that can run commands
+    "code": "Visual Studio Code", "code-oss": "Code", "codium": "VSCodium", "vscodium": "VSCodium",
+}
+
+
+def hands_off(win):
+    """The display name of the hands-off app a window belongs to, or None."""
+    app = str(win.get("app") or win.get("class") or "").strip().lower()
+    exe = str(win.get("exe") or exe_for(win.get("pid", 0))).strip().lower()
+    exe = os.path.basename(exe)
+    for key in (exe, app):
+        if key in HANDS_OFF:
+            return HANDS_OFF[key]
+    return None
+
+
+def window_at(x, y):
+    """The window under a screen point, if any."""
+    for c in visible_clients():
+        bx, by = c.get("at", [0, 0])
+        bw, bh = c.get("size", [0, 0])
+        if bx <= x <= bx + bw and by <= y <= by + bh:
+            return win_info(c, c.get("pid"))
+    return None
+
+
+# Clicks that delete, pay, send or sign out run only when the sidecar has asked the user ("confirmed").
+# Kept in step with hands-win/src/logic.rs and safety.mjs's RISKY_CLICK.
+RISKY = re.compile(
+    r"\b(delete|remove|erase|destroy|wipe|reset|deactivate|unsubscribe|pay|purchase|buy|checkout|check out|"
+    r"send|transfer|withdraw|uninstall|empty trash|discard|sign out|log out|logout|format|revoke|publish|"
+    r"cancel (my |your |the )?(subscription|plan|membership|account|order)|place (the |your )?order|"
+    r"confirm (payment|order|purchase|transfer)|close (my |your )?account|"
+    r"eliminar|borrar|pagar|comprar|enviar|cerrar sesion|cerrar sesión|supprimer|effacer|payer|acheter|envoyer|"
+    r"se deconnecter|se déconnecter|deconnexion|déconnexion|loschen|löschen|entfernen|"
+    r"bezahlen|kaufen|senden|abmelden|excluir|apagar|elimina|cancella|paga|acquista|invia|esci|"
+    r"verwijderen|betalen|kopen|verzenden|uitloggen|afmelden|padam|hapus|bayar|beli|hantar|kirim|log keluar|nyahlanggan|"
+    r"terminar sessao|terminar sessão)\b",
+    re.I,
+)
+RISKY_CJK = ("删除", "刪除", "移除", "清空", "支付", "付款", "购买", "購買", "发送", "發送", "退出登录", "登出", "注销",
+             "削除", "消去", "支払", "購入", "送信", "ログアウト", "退会", "삭제", "결제", "구매", "전송", "보내기", "로그아웃")
+
+
+def risky(s):
+    s = str(s or "")
+    return bool(RISKY.search(s)) or any(w in s for w in RISKY_CJK)
+
+
+SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 _.:@/-]{0,63}$")
+
+
+def safe_name(value, what):
+    """Workspace, monitor and special names go into a Hyprland expression: keep them to plain characters."""
+    v = str(value or "").strip()
+    if not SAFE_NAME.match(v):
+        fail(f"Invalid {what}: {v[:40]!r}")
+    return v
+
+
+def resolve(target):
+    if not target or target == "screen":
+        return None
+    # The sidecar prefixes app: to a read target; tolerate app:window:..., app:front, app:0x...
+    while target.startswith("app:") and target[4:].startswith(("window:", "app:", "screen", "front", "0x")):
+        target = target[4:]
+    if target.startswith("0x"):
+        target = "window:" + target
+    fp = front_client()
+    fp = fp.get("pid") if fp else None
+    if target == "front":
+        c = front_client()
+        return win_info(c, c.get("pid")) if c else None
+    if target.startswith("window:"):
+        want = target[7:]
+        for c in clients():
+            if str(c.get("address", "")).lower() == want.lower():
+                return win_info(c, fp)
+        return None
+    if target.startswith("app:"):
+        target = target[4:]
+    name = target.lower()
+    for c in visible_clients():
+        app = (c.get("class") or c.get("initialClass") or "").lower()
+        title = (c.get("title") or "").lower()
+        if app == name or name in app or name in title:
+            return win_info(c, fp)
+    return None
+
+
+def no_window(target):
+    return {"ok": False, "error": f"No matching window is open ({target})."}
+
+
+def out(v):
+    print(json.dumps(v))
+    sys.stdout.flush()
+    raise SystemExit(0)
+
+
+def fail(msg):
+    out({"ok": False, "error": msg})
+
+
+def progress(v):
+    print("@" + json.dumps(v), file=sys.stderr, flush=True)
+
+
+# ---------------------------------------------------------------- AT-SPI
+
+try:
+    import gi
+
+    gi.require_version("Atspi", "2.0")
+    from gi.repository import Atspi
+except Exception:
+    Atspi = None
+
+ROLE_WORDS = {
+    "push button": "button",
+    "toggle button": "button",
+    "entry": "text field",
+    "password text": "text field",
+    "text": "text",
+    "label": "text",
+    "link": "link",
+    "check box": "check box",
+    "radio button": "radio",
+    "combo box": "combo box",
+    "menu item": "menu item",
+    "page tab": "tab",
+    "list item": "list item",
+    "slider": "slider",
+    "spin button": "spin button",
+    "table cell": "cell",
+}
+
+
+def atspi_app(pid, win_name=""):
+    if Atspi is None:
+        return None
+    try:
+        desktop = Atspi.get_desktop(0)
+    except Exception:
+        return None
+    name_wanted = win_name or ""
+    for i in range(desktop.get_child_count()):
+        try:
+            app = desktop.get_child_at_index(i)
+            if pid and app.get_process_id() == pid:
+                return app
+            if name_wanted and name_wanted in (app.get_name() or "").lower():
+                return app
+        except Exception:
+            continue
+    return None
+
+
+def acc_text(acc):
+    try:
+        t = acc.get_text(0, -1)
+        return t or ""
+    except Exception:
+        return ""
+
+
+def walk(acc, scale, origin, items, texts, elsewhere, depth=0):
+    if depth > 24 or len(items) >= 260:
+        return
+    try:
+        role_name = (acc.get_role_name() or "").lower()
+        name = acc.get_name() or ""
+        rect = acc.get_extents(Atspi.CoordType.SCREEN)
+        x, y, w, h = rect.x, rect.y, rect.width, rect.height
+        showing = False
+        try:
+            showing = acc.get_state_set().contains(Atspi.StateType.SHOWING)
+        except Exception:
+            showing = True
+        role = ROLE_WORDS.get(role_name)
+        value = ""
+        if role in ("text field", "text", "cell"):
+            value = acc_text(acc)
+        if role:
+            label = name or value
+            item = {
+                "role": role,
+                "label": label[:80],
+                "bounds": [round(x / scale), round(y / scale), round(w / scale), round(h / scale)],
+            }
+            if value and role == "text field":
+                item["value"] = value[:80]
+            try:
+                if acc.get_state_set().contains(Atspi.StateType.SELECTED) or acc.get_state_set().contains(Atspi.StateType.FOCUSED):
+                    item["focused"] = True
+            except Exception:
+                pass
+            if not showing:
+                item["offscreen"] = True
+            if w > 0 and h > 0:
+                items.append(item)
+            if label:
+                if showing:
+                    if sum(len(t) for t in texts) < 5000:
+                        texts.append(label)
+                elif sum(len(t) for t in elsewhere) < 4000:
+                    elsewhere.append(label)
+        if value and value not in texts and showing:
+            texts.append(value[:200])
+        for i in range(acc.get_child_count()):
+            walk(acc.get_child_at_index(i), scale, origin, items, texts, elsewhere, depth + 1)
+    except Exception:
+        return
+
+
+def atspi_ui(win):
+    if Atspi is None:
+        return None
+    app = atspi_app(win.get("pid", 0), (win.get("app") or "").lower())
+    if app is None:
+        return None
+    scale = scale_for(win["bounds"])
+    items, texts, elsewhere = [], [], []
+    walk(app, scale, win["bounds"][:2], items, texts, elsewhere)
+    return {
+        "controls": items,
+        "texts": texts[:400],
+        "elsewhere": elsewhere[:200],
+    }
+
+
+# ---------------------------------------------------------------- OCR
+
+
+def temp_png():
+    """A new .png file only this user can read, for grim or convert to write over. mkstemp makes it, so no other
+    program can take the name between choosing it and writing it (mktemp's race)."""
+    fd, path = tempfile.mkstemp(suffix=".png")
+    os.close(fd)
+    return path
+
+
+def drop(path):
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
+
+
+def wrote(r, path):
+    """The command succeeded and left a picture (an empty file is what mkstemp made)."""
+    return r.returncode == 0 and os.path.exists(path) and os.path.getsize(path) > 0
+
+
+def capture_png(win=None, screen=False, cursor=False):
+    tmp = temp_png()
+    cmd = ["grim"]
+    if cursor:
+        cmd.append("-c")
+    if not screen and win:
+        x, y, w, h = win["bounds"]
+        cmd += ["-g", f"{x},{y} {w}x{h}"]
+    r = sh(cmd + [tmp])
+    if not wrote(r, tmp):
+        drop(tmp)
+        return None
+    return tmp
+
+
+def tsv_words(png, origin, scale):
+    r = sh(["tesseract", png, "stdout", "--psm", "6", "tsv"])
+    if r.returncode != 0:
+        return []
+    words = []
+    for line in r.stdout.splitlines():
+        cols = line.split("\t")
+        if len(cols) < 12 or cols[0] != "5":
+            continue
+        try:
+            left, top, w, h = (int(cols[6]), int(cols[7]), int(cols[8]), int(cols[9]))
+        except Exception:
+            continue
+        text = cols[11].strip()
+        if not text:
+            continue
+        words.append(
+            {
+                "text": text,
+                "bounds": [
+                    round(origin[0] + left / scale),
+                    round(origin[1] + top / scale),
+                    round(w / scale),
+                    round(h / scale),
+                ],
+            }
+        )
+    return words
+
+
+BROWSER = re.compile(r"zen|firefox|chrom|brave|mozilla|vivaldi", re.I)
+
+
+def browser_sidebar(win):
+    if not BROWSER.search((win.get("app") or "") + " " + (win.get("exe") or "")):
+        return []
+    x, y, w, h = win["bounds"]
+    sw = min(380, w)
+    tmp = temp_png()
+    r = sh(["grim", "-g", f"{x},{y} {sw}x{h}", tmp])
+    if not wrote(r, tmp):
+        drop(tmp)
+        return []
+    big = temp_png()
+    try:
+        sh(["convert", tmp, "-resize", "200%", big])
+        scale = scale_for(win["bounds"]) * 2
+        words = tsv_words(big, (x, y), scale)
+        lines, cur, last_y = [], [], None
+        for wd in words:
+            if last_y is not None and abs(wd["bounds"][1] - last_y) > 10:
+                lines.append(cur)
+                cur = []
+            cur.append(wd)
+            last_y = wd["bounds"][1]
+        if cur:
+            lines.append(cur)
+        return [" ".join(wd["text"] for wd in line) for line in lines if line]
+    finally:
+        for f in (tmp, big):
+            try:
+                os.unlink(f)
+            except Exception:
+                pass
+
+
+def ocr_ui(win):
+    png = capture_png(win)
+    if not png:
+        return {"controls": [], "texts": "", "elsewhere": ""}
+    try:
+        scale = scale_for(win["bounds"])
+        words = tsv_words(png, win["bounds"][:2], scale)
+        if len(words) < 4:
+            # Dark themes and thin terminal fonts read better inverted; try once more.
+            alt = temp_png()
+            try:
+                sh(["convert", png, "-colorspace", "Gray", "-negate", "-normalize", alt])
+                more = tsv_words(alt, win["bounds"][:2], scale)
+                if len(more) > len(words):
+                    words = more
+            except Exception:
+                pass
+            finally:
+                try:
+                    os.unlink(alt)
+                except Exception:
+                    pass
+        lines, cur, last_y = [], [], None
+        for w in words:
+            if last_y is not None and abs(w["bounds"][1] - last_y) > 12:
+                lines.append(cur)
+                cur = []
+            cur.append(w)
+            last_y = w["bounds"][1]
+        if cur:
+            lines.append(cur)
+        controls = []
+        for line in lines:
+            if not line:
+                continue
+            x0 = min(w["bounds"][0] for w in line)
+            y0 = min(w["bounds"][1] for w in line)
+            x1 = max(w["bounds"][0] + w["bounds"][2] for w in line)
+            y1 = max(w["bounds"][1] + w["bounds"][3] for w in line)
+            text = " ".join(w["text"] for w in line)
+            controls.append({"role": "text", "label": text[:80], "bounds": [x0, y0, x1 - x0, y1 - y0]})
+        texts = [c["label"] for c in controls][:400]
+        sidebar = browser_sidebar(win)
+        if sidebar:
+            texts = ["Sidebar (top to bottom): " + " | ".join(sidebar)] + texts
+        return {"controls": controls, "texts": texts, "elsewhere": []}
+    finally:
+        try:
+            os.unlink(png)
+        except Exception:
+            pass
+
+
+def ui_data(win, controls_only=False):
+    a = atspi_ui(win)
+    if not a or not a["controls"]:
+        a = ocr_ui(win)
+    controls = list(a.get("controls") or [])
+    if is_zen(win):
+        z = win.get("zen") or zen_state()
+        if z:
+            controls = zen_tab_controls(z, zen_active_title(win)) + controls
+            a["controls"] = controls
+            a["zen"] = z
+    for i, c in enumerate(controls, 1):
+        c["id"] = i
+    if controls_only:
+        return controls
+    return a
+
+
+# ---------------------------------------------------------------- input
+
+
+def ydotool(*args):
+    return sh(["ydotool", *args])
+
+
+KEY = {
+    "enter": 28, "return": 28, "tab": 15, "esc": 1, "escape": 1, "backspace": 14,
+    "delete": 111, "space": 57, "up": 103, "down": 108, "left": 105, "right": 106,
+    "home": 102, "end": 107, "pageup": 104, "pagedown": 109,
+    "ctrl": 29, "control": 29, "shift": 42, "alt": 56, "super": 125, "meta": 125,
+    "a": 30, "b": 48, "c": 46, "d": 32, "e": 18, "f": 33, "g": 34, "h": 35,
+    "i": 23, "j": 36, "k": 37, "l": 38, "m": 50, "n": 49, "o": 24, "p": 25,
+    "q": 16, "r": 19, "s": 31, "t": 20, "u": 22, "v": 47, "w": 17, "x": 45,
+    "y": 21, "z": 44,
+    "0": 11, "1": 2, "2": 3, "3": 4, "4": 5, "5": 6, "6": 7, "7": 8, "8": 9, "9": 10,
+}
+
+
+def press_combo(combo):
+    parts = [p.strip().lower() for p in re.split(r"[+\-]", combo) if p.strip()]
+    codes = [KEY[p] for p in parts if p in KEY]
+    if not codes:
+        return False
+    seq = []
+    for c in codes:
+        seq.append(f"{c}:1")
+    for c in reversed(codes):
+        seq.append(f"{c}:0")
+    ydotool("key", *seq)
+    return True
+
+
+def type_text(text, xwayland=False):
+    if not text:
+        return True
+    # wtype sends Wayland keys; XWayland apps decode them with the wrong keymap (letters became digits and
+    # symbols, and it still returned success), so XWayland gets ydotool's uinput keyboard. Wayland does the
+    # opposite: wtype is exact there. Clipboard paste is the exact fallback for both.
+    def via_wtype():
+        return bool(shutil.which("wtype")) and sh(["wtype", "--", text]).returncode == 0
+
+    def via_ydotool():
+        if not all(ord(ch) < 128 for ch in text):
+            return False
+        return ydotool("type", "--key-delay", "2", "--", text).returncode == 0
+
+    def via_clipboard():
+        if not shutil.which("wl-copy"):
+            return False
+        prev = clip_text()
+        sh(["wl-copy", "--", text])
+        press_combo("ctrl+v")
+        time.sleep(0.2)
+        # Typing must not leave the user's clipboard holding what was typed.
+        if prev is not None:
+            sh(["wl-copy", "--", prev])
+        return True
+
+    order = [via_ydotool, via_clipboard, via_wtype] if xwayland else [via_wtype, via_clipboard, via_ydotool]
+    for attempt in order:
+        if attempt():
+            return True
+    return False
+
+
+def click_at(x, y, button=1):
+    cursor_move(x, y)
+    time.sleep(0.06)
+    # ydotool names buttons in hex and 0x01 is the *right* one; 1 from a tool means the left button.
+    code = {1: "0xC0", 2: "0xC1", 3: "0xC2"}.get(int(button or 1), "0xC0")
+    ydotool("click", code)
+
+
+def controls_of(win):
+    return ui_data(win, controls_only=True)
+
+
+def find_control(win, text=None, cid=None, field=False):
+    controls = controls_of(win)
+    if cid is not None:
+        try:
+            i = int(cid) - 1
+            if 0 <= i < len(controls):
+                return controls[i]
+        except Exception:
+            pass
+        return None
+    if text is None:
+        return None
+    q = text.strip().lower()
+    candidates = []
+    for c in controls:
+        label = str(c.get("label", "")).strip().lower()
+        value = str(c.get("value", "")).strip().lower()
+        if not label and not value:
+            continue
+        if field and c.get("role") != "text field" and c.get("role") != "text":
+            continue
+        score = 3 if label == q else 2 if label.startswith(q) else 1 if q in label or q in value else 0
+        if score:
+            candidates.append((score, c))
+    if not candidates:
+        # A browser's accessibility tree can be partial: retry the words against OCR of its window.
+        try:
+            ocr = ocr_ui(win)["controls"]
+        except Exception:
+            ocr = []
+        for c in ocr:
+            label = str(c.get("label", "")).strip().lower()
+            if label == q:
+                return c
+        for c in ocr:
+            label = str(c.get("label", "")).strip().lower()
+            if q in label:
+                return c
+        return None
+    candidates.sort(key=lambda t: (-t[0], 1 if t[1].get("offscreen") else 0))
+    return candidates[0][1]
+
+
+def center(bounds):
+    x, y, w, h = bounds
+    return x + w / 2, y + h / 2
+
+
+def focus_window(win):
+    addr = win.get("id")
+    if not addr:
+        return False
+    sh(["hyprctl", "dispatch", f"hl.dsp.focus({{ window = 'address:{addr}' }})"])
+    time.sleep(0.35)
+    active = hypr("activewindow") or {}
+    return str(active.get("address", "")).lower() == str(addr).lower()
+
+
+def norm_text(data):
+    parts = []
+    for t in data.get("texts") or []:
+        parts.append(str(t))
+    for c in data.get("controls") or []:
+        parts.append(str(c.get("label") or ""))
+        parts.append(str(c.get("value") or ""))
+    return " ".join(" ".join(parts).split()).lower()
+
+
+def permission_dialog():
+    for c in visible_clients():
+        s = ((c.get("class") or "") + " " + (c.get("title") or "")).lower()
+        if "xdg-desktop-portal" in s or ("allow" in s and any(x in s for x in ("screen", "share", "record"))):
+            return win_info(c)
+    return None
+
+
+def permission_prompt_in(png):
+    """A browser's own Allow/Deny screen-capture prompt, read from the picture: in-page, so no window to find."""
+    try:
+        words = tsv_words(png, (0, 0), 1.0)
+    except Exception:
+        return False
+    hits = {w["text"].strip().lower().strip(".,:;!?()[]"): w["bounds"] for w in words}
+    if "allow" not in hits or "deny" not in hits:
+        return False
+    near = abs(hits["allow"][1] - hits["deny"][1]) < 220 and abs(hits["allow"][0] - hits["deny"][0]) < 700
+    shared = any(k in hits for k in ("screen", "share", "sharing", "record", "capture", "display"))
+    return bool(near and shared)
+
+
+def step_bounds(bounds, do):
+    progress({"ev": "step", "do": do, "bounds": bounds})
+
+
+# ---------------------------------------------------------------- commands
+
+
+def cmd_windows():
+    front = front_client()
+    fp = front.get("pid") if front else None
+    active = hypr("activeworkspace") or {}
+    out({"ok": True, "activeWorkspace": active.get("id"), "windows": [win_info(c, fp) for c in visible_clients()[:40]]})
+
+
+def cmd_front():
+    front = front_client()
+    if not front:
+        out({"ok": True})
+    o = {"ok": True, "app": front.get("class") or front.get("initialClass") or "", "exe": exe_for(front.get("pid", 0))}
+    if front.get("title"):
+        o["title"] = front["title"]
+    if re.search(r"zen|firefox|chrom|brave|vivaldi|librewolf", o.get("exe", "") + o.get("app", ""), re.I):
+        url = browser_url(front)
+        if url:
+            o["url"] = url
+    out(o)
+
+
+def browser_url(win):
+    app = atspi_app(win.get("pid", 0), (win.get("app") or "").lower())
+    if app is None:
+        return None
+    found = []
+
+    def walk_url(acc, depth=0):
+        if depth > 24 or found:
+            return
+        try:
+            name = (acc.get_name() or "").lower()
+            role = (acc.get_role_name() or "").lower()
+            if role in ("entry", "text") and ("address" in name or "url" in name or "search" in name):
+                t = acc_text(acc).strip()
+                if t.startswith("http"):
+                    found.append(t)
+            for i in range(acc.get_child_count()):
+                walk_url(acc.get_child_at_index(i), depth + 1)
+        except Exception:
+            return
+
+    walk_url(app)
+    return found[0] if found else None
+
+
+def cmd_locate(target):
+    if target == "screen":
+        ms = monitors()
+        if ms:
+            m = ms[0]
+            out({"ok": True, "what": "screen", "bounds": [m.get("x", 0), m.get("y", 0), m.get("width", 0), m.get("height", 0)]})
+        out({"ok": True, "what": "screen"})
+    w = resolve(target)
+    if not w:
+        fail(no_window(target)["error"])
+    out({"ok": True, "window": w})
+
+
+def cmd_capture(file, target, maxw=None, thumb=None, thumb_max=900):
+    d = permission_dialog()
+    if d:
+        fail("A screen-capture permission dialog is open (Allow/Deny). Ask the user to allow it; don't click it.")
+    if target == "screen":
+        ms = monitors()
+        bounds = [ms[0].get("x", 0), ms[0].get("y", 0), ms[0].get("width", 0), ms[0].get("height", 0)] if ms else None
+        png = capture_png(screen=True, cursor=True)
+        o = {"ok": True, "file": file, "what": "screen"}
+    else:
+        w = resolve(target)
+        if not w:
+            fail(no_window(target)["error"])
+        bounds = w["bounds"]
+        png = capture_png(w, cursor=True)
+        o = {"ok": True, "file": file, "window": w}
+    if not png:
+        fail("Screen capture failed.")
+    try:
+        if permission_prompt_in(png):
+            fail("A screen-capture permission prompt is in the picture (Allow / Deny). Tell the user to allow it; don't click it.")
+        args = ["convert", png]
+        if maxw:
+            args += ["-resize", f"{maxw}x>"]
+        if file.lower().endswith((".jpg", ".jpeg")):
+            args += ["-quality", "85"]
+        args += [file]
+        r = sh(args)
+        if r.returncode != 0:
+            shutil.copyfile(png, file)
+        if bounds:
+            o["bounds"] = bounds
+        try:
+            dims = sh_out(["identify", "-format", "%w %h", file]).split()
+            if len(dims) == 2:
+                o["pixels"] = [int(dims[0]), int(dims[1])]
+        except Exception:
+            pass
+        if thumb:
+            args = ["convert", png, "-resize", f"{thumb_max}x>", "-quality", "72", thumb]
+            sh(args)
+    finally:
+        try:
+            os.unlink(png)
+        except Exception:
+            pass
+    out(o)
+
+
+def cmd_ui(target, controls_only=False):
+    w = resolve(target)
+    if not w:
+        fail(no_window(target)["error"])
+    data = ui_data(w)
+    if "zen" in w:
+        z = w["zen"]
+        count = sum(len(sp.get("tabs") or []) for sp in z.get("spaces") or [])
+        lines = [
+            f"Zen workspace: {z.get('active') or '?'} (active). "
+            f"{count} tabs are listed above as tab controls: workspace, title, and address (the current one is marked). "
+            "Switch with act_in_app {do:'tab', text:'...'} (or workspace + index), never by clicking the sidebar."
+        ]
+        data["texts"] = lines + list(data.get("texts") or [])
+    o = {"ok": True, "window": w}
+    o["controls"] = data["controls"]
+    if not controls_only:
+        o["texts"] = data["texts"]
+        o["elsewhere"] = data["elsewhere"]
+        if not data["controls"]:
+            o["note"] = "This app shares no controls and no text was found; use a screenshot plus click at coordinates instead."
+    out(o)
+
+
+def cmd_locate_control(target, cid):
+    w = resolve(target)
+    if not w:
+        fail(no_window(target)["error"])
+    controls = controls_of(w)
+    try:
+        i = int(cid) - 1
+    except Exception:
+        i = -1
+    if i < 0 or i >= len(controls):
+        fail(f"No control {cid} in {w.get('class', '')}. Read the window again.")
+    out({"ok": True, "window": w, "control": controls[i]})
+
+
+def match_kind(text, q):
+    t, ql = text.strip().lower(), q.strip().lower()
+    if t == ql:
+        return "whole"
+    if ql in t:
+        return "part"
+    return "words" if all(w in t.split() for w in ql.split()) else None
+
+
+def cmd_find_text(target, q, scroll=False):
+    wins = []
+    if target == "screen":
+        wins = visible_clients()
+    elif target == "front":
+        f = front_client()
+        wins = [c for c in visible_clients() if f and c.get("pid") == f.get("pid")]
+    elif target.startswith("app:"):
+        name = target[4:].lower()
+        wins = [c for c in visible_clients() if name in ((c.get("class") or "") + (c.get("title") or "")).lower()]
+    else:
+        w = resolve(target)
+        wins = [w] if w else []
+    if not wins:
+        fail("No matching window is open.")
+    matches = []
+    for rank, w in enumerate(wins[:12]):
+        for c in controls_of(w):
+            kind = match_kind(str(c.get("label", "")), q)
+            if not kind:
+                continue
+            matches.append({"text": c.get("label", "")[:80], "match": kind, "role": c.get("role"), "bounds": c.get("bounds"), "window": w, "rank": rank})
+    exact = [m for m in matches if m["match"] == "whole"]
+    rest = [m for m in matches if m["match"] != "whole"]
+    out({"ok": True, "matches": (exact + rest)[:8]})
+
+
+def cmd_ocr_find(target, text, all_matches=False):
+    w = resolve(target) if target != "screen" else None
+    if target != "screen" and not w:
+        fail(no_window(target)["error"])
+    if w:
+        png = capture_png(w)
+        origin, scale = w["bounds"][:2], scale_for(w["bounds"])
+    else:
+        png = capture_png(screen=True)
+        origin, scale = (0, 0), 1.0
+    if not png:
+        fail("Screen capture failed.")
+    try:
+        words = tsv_words(png, origin, scale)
+    finally:
+        try:
+            os.unlink(png)
+        except Exception:
+            pass
+    q = text.strip().lower()
+    matches = []
+    for wd in words:
+        if q in wd["text"].strip().lower():
+            matches.append({"text": wd["text"][:80], "match": "whole" if wd["text"].strip().lower() == q else "part", "bounds": wd["bounds"]})
+    if not all_matches:
+        matches = matches[:1]
+    out({"ok": True, "matches": matches})
+
+
+def cmd_refine(rects_json, target=None):
+    try:
+        rects = json.loads(rects_json)
+    except Exception:
+        fail("usage: refine '[[x,y,w,h],...]' [window:<id>]")
+    out({"ok": True, "boxes": rects})
+
+
+def cmd_act(plan_json):
+    try:
+        plan = json.loads(plan_json)
+    except Exception:
+        fail("bad plan")
+    target = plan.get("window")
+    w = None
+    if target:
+        w = resolve(f"window:{target}")
+    elif plan.get("app"):
+        w = resolve(f"app:{plan['app']}")
+    else:
+        c = front_client()
+        w = win_info(c, c.get("pid")) if c else None
+    if not w:
+        fail(f"No matching window is open ({plan.get('app') or target or 'front'}).")
+    if blocked := hands_off(w):
+        fail(f"Blocked for safety: {blocked} holds a terminal or passwords, and I never type or click in it. Show the user where to click instead.")
+    if not focus_window(w):
+        fail(f"Couldn't focus {w.get('app')} — it may have closed, or another window took the keyboard. Ask the user to click its window once, then try again.")
+    before_text = norm_text(ui_data(w))
+    done = []
+    last_clicked = None
+    progress({"ev": "borrow"})
+    for n, step in enumerate(plan.get("steps", []), 1):
+        do = step.get("do", "")
+        try:
+            # A step may have switched apps (alt+tab): check the front window before acting in it.
+            if do != "wait":
+                current = front_client()
+                if current and (blocked := hands_off(current)):
+                    fail(f"Step {n}: Blocked for safety: {blocked} came to the front, and I never type or click in it.")
+            if do in ("click_at", "hover"):
+                x, y = step.get("x"), step.get("y")
+                if x is None or y is None:
+                    raise ValueError("no point")
+                step_bounds([x - 4, y - 4, 8, 8], do)
+                if do == "click_at":
+                    if (spot := window_at(x, y)) and (blocked := hands_off(spot)):
+                        fail(f"Step {n}: Blocked for safety: that spot is on {blocked}, and I never click in it.")
+                    bx, by, bw, bh = w["bounds"]
+                    if not (bx - 2 <= x <= bx + bw + 2 and by - 2 <= y <= by + bh + 2):
+                        fail(f"Step {n}: {x},{y} is outside the {w.get('app')} window ({w['bounds']}).")
+                    title_before = active_title(w)
+                    click_at(x, y, int(step.get("button", 1)))
+                    time.sleep(0.35)
+                    title_after = active_title(w)
+                    rel = step.get("rel")
+                    at = f"{rel[0]},{rel[1]} in the window" if isinstance(rel, list) and len(rel) == 2 else "in the window"
+                    if title_after and title_after != title_before:
+                        done.append(f"clicked at {at}; the window is now titled \"{title_after[:80]}\"")
+                    else:
+                        done.append(f"clicked at {at}; the window title is unchanged, so read its text below")
+                else:
+                    cursor_move(x, y)
+                    done.append("hovered")
+            elif do in ("workspace", "zen_workspace"):
+                z = zen_state()
+                if not z:
+                    raise ValueError("Zen's session store couldn't be read, so its workspaces aren't known.")
+                name = step.get("name") or step.get("workspace") or step.get("text")
+                space = zen_find_space(z, name)
+                if not space:
+                    names = ", ".join(sp["name"] for sp in z.get("spaces") or [])
+                    raise ValueError(f"there's no Zen workspace called {name!r} (the workspaces are: {names})")
+                if not zen_switch_space(z, w, space):
+                    raise ValueError(f"couldn't switch Zen to the {space['name']} workspace")
+                t = zen_active_title(w)
+                u = copy_active_url(w)
+                done.append(f"switched to the {space['name']} workspace (now showing \"{t or 'a tab'}\" — {u or 'no address'})")
+            elif do == "open_tab":
+                done.append(zen_open_tab(w, step.get("url") or step.get("text"), step.get("workspace") or step.get("space")))
+            elif do == "close_tab":
+                done.append(zen_close_tab(w, step.get("workspace") or step.get("space"), step.get("index") or step.get("num"), step.get("text") or step.get("title"), step.get("url")))
+            elif do == "move_tab":
+                done.append(zen_move_tab(w, step.get("workspace") or step.get("space"), step.get("to") or step.get("destination"), step.get("index") or step.get("num"), step.get("text") or step.get("title"), step.get("url")))
+            elif do == "workspace_create":
+                done.append(zen_workspace_create(w, step.get("name")))
+            elif do == "workspace_rename":
+                done.append(zen_workspace_rename(w, step.get("workspace") or step.get("current"), step.get("name")))
+            elif do == "tab":
+                done.append(zen_activate_tab(w, step.get("workspace") or step.get("space"), step.get("index") or step.get("num"), step.get("text") or step.get("title"), step.get("url")))
+            elif do in ("click", "click_text", "choose"):
+                text = step.get("text") or step.get("option")
+                c = find_control(w, text=text, cid=step.get("id"))
+                if c and c.get("role") == "tab":
+                    # A browser tab lives in the window's chrome, where a pointer click lands but doesn't activate it:
+                    # switch through the browser itself, then check the selected tab's title and address.
+                    done.append(zen_activate_tab(w, c.get("workspace"), None, c.get("title"), c.get("url")))
+                    continue
+                if not c:
+                    if text and is_zen(w):
+                        if risky(text) and step.get("confirmed") is not True:
+                            fail(f"Step {n}: Stopped before opening \"{text}\": it could delete, pay, send or sign out, and the user hasn't said yes to that.")
+                        done.append(zen_activate_tab(w, None, None, text, None))
+                        continue
+                    raise ValueError(f"couldn't find {text or step.get('id')}")
+                label = c.get("label") or text or ""
+                if risky(label) and step.get("confirmed") is not True:
+                    fail(f"Step {n}: Stopped before clicking \"{label}\": it could delete, pay, send or sign out, and the user hasn't said yes to that.")
+                x, y = center(c["bounds"])
+                step_bounds(c["bounds"], do)
+                title_before = active_title(w)
+                click_at(x, y)
+                time.sleep(0.3)
+                title_after = active_title(w)
+                last_clicked = c
+                label = c.get("label", "")[:40]
+                done.append(f"clicked {label}" + (f" (the window is now titled \"{title_after[:60]}\")" if title_after and title_after != title_before else " (no title change; read the text below)"))
+            elif do in ("fill", "type"):
+                text = step.get("text", "")
+                if do == "fill":
+                    field = step.get("field")
+                    c = find_control(w, text=field, field=True) if field else last_clicked
+                    if c:
+                        x, y = center(c["bounds"])
+                        step_bounds(c["bounds"], "click")
+                        click_at(x, y)
+                        time.sleep(0.12)
+                        last_clicked = c
+                    press_combo("ctrl+a")
+                    time.sleep(0.05)
+                before_type = norm_text(ui_data(w))
+                if not type_text(text, bool(w.get("xwayland"))):
+                    raise ValueError("couldn't type")
+                # Read it back: an exact match is proof; otherwise a second look catches a slow redraw.
+                verified = changed = False
+                for attempt in range(4):
+                    time.sleep(0.3)
+                    read = ui_data(w)
+                    after_type = norm_text(read)
+                    verified = bool(text) and " ".join(str(text).split()).lower() in after_type
+                    changed = after_type != before_type
+                    if verified or changed:
+                        break
+                    # A field can lose the race to take the click: click it again, clear it, retype once.
+                    if do == "fill" and attempt == 1 and field:
+                        c = find_control(w, text=field, field=True)
+                        if c:
+                            click_at(*center(c["bounds"]))
+                            time.sleep(0.2)
+                            press_combo("ctrl+a")
+                            time.sleep(0.05)
+                            type_text(text, bool(w.get("xwayland")))
+                done.append(("filled" if do == "fill" else "typed") + (" (verified)" if verified else " (the window changed)" if changed else " (no visible change; check it)"))
+            elif do == "key":
+                key = step.get("combo") or step.get("key") or ""
+                if not press_combo(key):
+                    raise ValueError("unknown key")
+                time.sleep(0.25)
+                changed = norm_text(ui_data(w)) != before_text
+                done.append(f"pressed {key}" + (" (the window changed)" if changed else ""))
+            elif do == "scroll":
+                amount = int(step.get("dy") or step.get("y") or step.get("amount") or 3)
+                direction = step.get("direction")
+                button = "4" if direction == "up" or (direction != "down" and amount > 0) else "5"
+                for _ in range(min(abs(amount), 12)):
+                    ydotool("click", button)
+                    time.sleep(0.03)
+                done.append("scrolled")
+            elif do == "wait":
+                time.sleep(min(float(step.get("ms") or step.get("seconds") or 0.3), 5))
+                done.append("waited")
+            elif do == "focus":
+                c = find_control(w, text=step.get("text"), cid=step.get("id"))
+                if c:
+                    click_at(*center(c["bounds"]))
+                done.append("focused")
+            else:
+                raise ValueError(f"unsupported step {do}")
+        except SystemExit:
+            raise
+        except Exception as e:
+            fail(f"Step {n}: {e}")
+    data = ui_data(w)
+    fresh = resolve(f"window:{w['id']}") or w
+    out({"ok": True, "window": fresh, "done": done, "controls": data["controls"], "texts": data["texts"], "elsewhere": data["elsewhere"]})
+
+
+def cmd_select(file):
+    d = permission_dialog()
+    if d:
+        fail("A screen-capture permission dialog is open (Allow/Deny). Ask the user to allow it; don't click it.")
+    if not shutil.which("slurp"):
+        fail("Area selection needs slurp.")
+    r = sh(["slurp"])
+    if r.returncode != 0 or not r.stdout.strip():
+        out({"ok": False, "cancelled": True})
+    geom = r.stdout.strip()
+    r = sh(["grim", "-g", geom, file])
+    if r.returncode != 0:
+        fail("Screen capture failed.")
+    out({"ok": True, "file": file})
+
+
+def dispatch(expr):
+    r = sh(["hyprctl", "dispatch", expr])
+    return r.returncode == 0
+
+
+def cursor_move(x, y):
+    """Put the pointer at a screen point through Hyprland itself. ydotool's --absolute space is 2x this
+    output, so its moves landed at twice the coordinate (and clamped at the edge); this does not."""
+    return dispatch(f"hl.dsp.cursor.move({{ x = {int(round(float(x)))}, y = {int(round(float(y)))} }})")
+
+
+# ---------------------------------------------------------------- uinput pointer
+# A real virtual mouse for drags. A button held on one device and the pointer moved by another (or by a
+# compositor dispatch) isn't one continuous gesture to a game: apps that track motion while a button is held
+# (shapez belts, camera drags) need press, motion and release from the same uinput device.
+EV_SYN, EV_KEY, EV_REL = 0, 1, 2
+REL_X, REL_Y = 0, 1
+BTN_LEFT, BTN_RIGHT, BTN_MIDDLE = 0x110, 0x111, 0x112
+UI_SET_EVBIT, UI_SET_KEYBIT, UI_SET_RELBIT = 0x40045564, 0x40045565, 0x40045566
+UI_DEV_CREATE, UI_DEV_DESTROY = 0x5501, 0x5502
+
+
+class UinputMouse:
+    """A virtual relative mouse (EV_REL plus the three buttons), created for one gesture and destroyed after."""
+
+    def __init__(self, name="Roamies virtual mouse"):
+        self.fd = os.open("/dev/uinput", os.O_WRONLY | os.O_NONBLOCK)
+        fcntl.ioctl(self.fd, UI_SET_EVBIT, EV_KEY)
+        fcntl.ioctl(self.fd, UI_SET_EVBIT, EV_REL)
+        fcntl.ioctl(self.fd, UI_SET_EVBIT, EV_SYN)
+        for key in (BTN_LEFT, BTN_RIGHT, BTN_MIDDLE):
+            fcntl.ioctl(self.fd, UI_SET_KEYBIT, key)
+        for rel in (REL_X, REL_Y):
+            fcntl.ioctl(self.fd, UI_SET_RELBIT, rel)
+        # Legacy uinput_user_dev: name[80], input_id (4 u16), ff_effects_max, then the abs tables (unused).
+        dev = struct.pack("80sHHHHI", name.encode()[:79], 0x06, 0x2333, 0x6667, 1, 0) + b"\0" * 1024
+        os.write(self.fd, dev)
+        fcntl.ioctl(self.fd, UI_DEV_CREATE)
+        time.sleep(0.06)
+
+    def emit(self, kind, code, value):
+        now = time.time()
+        sec, usec = int(now), int((now - int(now)) * 1_000_000)
+        os.write(self.fd, struct.pack("llHHi", sec, usec, kind, code, value))
+
+    def syn(self):
+        self.emit(EV_SYN, 0, 0)
+
+    def move(self, dx, dy):
+        if dx:
+            self.emit(EV_REL, REL_X, int(dx))
+        if dy:
+            self.emit(EV_REL, REL_Y, int(dy))
+        self.syn()
+
+    def button(self, button, down):
+        self.emit(EV_KEY, button, 1 if down else 0)
+        self.syn()
+
+    def close(self):
+        try:
+            fcntl.ioctl(self.fd, UI_DEV_DESTROY)
+        except Exception:
+            pass
+        try:
+            os.close(self.fd)
+        except Exception:
+            pass
+
+
+def button_code(button):
+    return {1: BTN_LEFT, 2: BTN_RIGHT, 3: BTN_MIDDLE}.get(int(button or 1), BTN_LEFT)
+
+
+def cursor_pos():
+    text = sh_out(["hyprctl", "cursorpos"]).strip()
+    m = re.match(r"\s*(-?\d+)\s*,\s*(-?\d+)", text)
+    return (int(m.group(1)), int(m.group(2))) if m else None
+
+
+def pointer_goto(mouse, x, y, tolerance=2):
+    """Move by relative uinput steps, reading the pointer back so acceleration can't leave it short or past."""
+    for _ in range(80):
+        pos = cursor_pos()
+        if not pos:
+            return False
+        dx, dy = x - pos[0], y - pos[1]
+        if abs(dx) <= tolerance and abs(dy) <= tolerance:
+            return True
+        # Small steps: a large relative jump under acceleration overshoots and oscillates.
+        mouse.move(max(-20, min(20, dx)), max(-20, min(20, dy)))
+        time.sleep(0.02)
+    return False
+
+
+def pointer_drag(a, b, button=1, steps=24, delay=0.01):
+    """Press at a, move through interpolated points to b, release. Returns the cursor path endpoints."""
+    mouse = UinputMouse()
+    try:
+        if not pointer_goto(mouse, a[0], a[1]):
+            return {"ok": False, "error": "Couldn't put the pointer at the start point."}
+        before = cursor_pos() or (round(a[0]), round(a[1]))
+        mouse.button(button_code(button), True)
+        time.sleep(0.04)
+        steps = max(2, min(int(steps or 24), 200))
+        for i in range(1, steps + 1):
+            x = a[0] + (b[0] - a[0]) * i / steps
+            y = a[1] + (b[1] - a[1]) * i / steps
+            mouse.move(round(x) - (before[0] if i == 1 else round(a[0] + (b[0] - a[0]) * (i - 1) / steps)),
+                       round(y) - (before[1] if i == 1 else round(a[1] + (b[1] - a[1]) * (i - 1) / steps)))
+            time.sleep(max(0.001, float(delay or 0.01)))
+        # Land on the exact end point even if acceleration stretched the path.
+        pointer_goto(mouse, b[0], b[1])
+        time.sleep(0.04)
+        mouse.button(button_code(button), False)
+        after = cursor_pos()
+        return {"ok": True, "from": list(before or a), "to": list(after or b), "button": int(button or 1), "steps": steps}
+    finally:
+        mouse.close()
+
+
+TYPE_TEST_TEXT = ("Hello, World! This is a long typing test: 1234567890.\n\n"
+                  "Second paragraph with CAPITALS, commas, semicolons; quotes \"like this\" and apostrophes don't break.\n"
+                  "Line three ends with a question? Yes!")
+
+
+def cmd_selftest_type():
+    """Type the same long string into a Wayland terminal and an XWayland terminal, then compare the files."""
+    results = []
+    work = tempfile.mkdtemp(prefix="roamies-type-")  # private to this user, unlike a fixed name in /tmp
+    for label, x11 in (("wayland", False), ("xwayland", True)):
+        title = "TypeSelf" + label
+        target = os.path.join(work, f"{label}.txt")
+        args = ["kitty", "--title", title, "sh", "-c", 'cat > "$0"', target]
+        if x11:
+            args = ["env", "-u", "WAYLAND_DISPLAY"] + args
+        subprocess.Popen(["setsid"] + args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        time.sleep(2.5)
+        w = None
+        for c in visible_clients():
+            if title in (c.get("title") or ""):
+                w = win_info(c)
+                break
+        if not w:
+            results.append({"where": label, "ok": False, "error": "the test window didn't open"})
+            continue
+        if not focus_window(w):
+            results.append({"where": label, "ok": False, "error": "couldn't focus the test window"})
+            continue
+        type_text(TYPE_TEST_TEXT, x11)
+        time.sleep(0.4)
+        press_combo("ctrl+d")
+        time.sleep(0.9)
+        try:
+            got = open(target, encoding="utf-8").read()
+        except Exception:
+            got = ""
+        results.append({"where": label, "ok": got == TYPE_TEST_TEXT, "expected": TYPE_TEST_TEXT, "got": got[:800]})
+    shutil.rmtree(work, ignore_errors=True)
+    out({"ok": all(r.get("ok") for r in results), "text": TYPE_TEST_TEXT, "results": results})
+
+
+def cmd_pointer(plan_json):
+    try:
+        p = json.loads(plan_json)
+    except Exception:
+        fail("bad pointer plan")
+    action = str(p.get("action") or "drag")
+    if action != "drag":
+        fail(f"unknown pointer action {action}")
+    a, b = p.get("from"), p.get("to")
+    if not (isinstance(a, list) and len(a) == 2 and isinstance(b, list) and len(b) == 2):
+        fail("from and to are required as [x, y] screen points")
+    for pt in (a, b):
+        if (spot := window_at(float(pt[0]), float(pt[1]))) and (blocked := hands_off(spot)):
+            fail(f"Blocked for safety: that drag is on {blocked}, and I never click or drag in it.")
+    res = pointer_drag([float(a[0]), float(a[1])], [float(b[0]), float(b[1])], int(p.get("button") or 1), int(p.get("steps") or 24), float(p.get("delay") or 0.01))
+    if res.get("ok") is False:
+        fail(res.get("error") or "drag failed")
+    out({"ok": True, "done": f"Dragged from {int(a[0])},{int(a[1])} to {int(b[0])},{int(b[1])} with the {'left' if int(p.get('button') or 1) == 1 else 'right' if int(p.get('button') or 1) == 2 else 'middle'} button ({res['steps']} moves)", **res})
+
+
+def cmd_selftest_drag():
+    """Prove a left drag and a right-drag pan on shapez, with before/after pictures and a pixel-change count."""
+    w = None
+    for c in visible_clients():
+        if "shapez" in ((c.get("class") or "") + " " + (c.get("title") or "")).lower():
+            w = win_info(c)
+            break
+    if not w:
+        fail("shapez isn't open. Start it, then run the self-test again.")
+    if not focus_window(w):
+        fail("Couldn't focus shapez.")
+    time.sleep(0.6)
+    bx, by, bw, bh = w["bounds"]
+    # A horizontal belt run near the middle of the grid, and a camera pan to the right.
+    a = [bx + int(bw * 0.12), by + int(bh * 0.42)]
+    b = [a[0] + int(min(320, bw * 0.22)), a[1]]
+    before = capture_png(w)
+    if not before:
+        fail("Couldn't capture shapez.")
+    # The first hotbar slot is the belt in shapez.
+    press_combo("1")
+    time.sleep(0.25)
+    left = pointer_drag(a, b, 1, 24, 0.012)
+    time.sleep(0.5)
+    after = capture_png(w)
+    right_from = [bx + int(bw * 0.55), by + int(bh * 0.55)]
+    right_to = [right_from[0] + 160, right_from[1]]
+    right = pointer_drag(right_from, right_to, 2, 18, 0.012)
+    time.sleep(0.5)
+    pan = capture_png(w)
+    def changed(x, y):
+        if not (x and y):
+            return None
+        r = sh(["compare", "-metric", "AE", x, y, "null:"])
+        text = (r.stderr or r.stdout).strip().split()[0]
+        try:
+            return int(round(float(text)))
+        except Exception:
+            return None
+    d1 = changed(before, after)
+    d2 = changed(after, pan)
+    files = {"before": before, "after_left": after, "after_pan": pan}
+    notes = []
+    if d1 == 0:
+        notes.append("the left drag changed no pixels")
+    if d2 == 0:
+        notes.append("the right drag changed no pixels")
+    out({"ok": True, "window": w, "left": left, "right": right, "changed": {"left": d1, "pan": d2}, "files": files, "note": "; ".join(notes) or "left drag and right-drag pan both changed the screen"})
+
+
+LAUNCH_DIRS = ["/usr/share/applications", "/usr/local/share/applications", os.path.expanduser("~/.local/share/applications")]
+
+# Only cosmetic options can be set from here; anything that can add binds or run commands stays in the settings app.
+OPTION_WRITES = {
+    "general:gaps_in": "int", "general:gaps_out": "int", "general:border_size": "int",
+    "decoration:rounding": "int", "decoration:active_opacity": "float", "decoration:inactive_opacity": "float",
+    "decoration:dim_inactive": "bool", "animations:enabled": "bool", "misc:disable_hyprland_logo": "bool",
+    "misc:disable_splash_rendering": "bool", "cursor:inactive_timeout": "int",
+}
+
+
+def desktop_entries():
+    for d in LAUNCH_DIRS:
+        for path in glob.glob(os.path.join(d, "*.desktop")):
+            try:
+                text = open(path, encoding="utf-8", errors="replace").read()
+            except OSError:
+                continue
+            if re.search(r"^NoDisplay\s*=\s*true\s*$", text, re.I | re.M):
+                continue
+            name = re.search(r"^Name\s*=\s*(.+)$", text, re.M)
+            if name:
+                yield (os.path.basename(path)[:-8], name.group(1).strip(), path)
+
+
+def open_app(name):
+    """Open a web address, a file or a desktop app without a shell, so this cannot run arbitrary commands."""
+    n = str(name or "").strip()
+    if not n or "\n" in n or "\r" in n or "\0" in n:
+        fail("Invalid app or address")
+    if n.startswith(("http://", "https://", "mailto:")):
+        subprocess.Popen(["xdg-open", n], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+        return f"Opened {n}"
+    path = os.path.expanduser(n)
+    if os.path.exists(path):
+        subprocess.Popen(["xdg-open", path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+        return f"Opened {n}"
+    if re.search(r"[;&|`$<>]", n):
+        fail("That is a command, not an app. Ask the user to run it, or use run_command.")
+    low = n.lower()
+    entries = list(desktop_entries())
+    hit = next((e for e in entries if e[0].lower() == low or e[1].lower() == low), None)
+    if not hit:
+        hit = next((e for e in entries if low in e[1].lower()), None)
+    if not hit:
+        fail(f"There's no app called {n!r}.")
+    if shutil.which("gio"):
+        subprocess.Popen(["gio", "launch", hit[2]], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    elif shutil.which("gtk-launch"):
+        subprocess.Popen(["gtk-launch", hit[0]], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    else:
+        fail("This computer has neither gio nor gtk-launch to open apps.")
+    return f"Opened {hit[1]}"
+
+
+def cmd_wm(plan_json):
+    try:
+        p = json.loads(plan_json)
+    except Exception:
+        fail("bad wm plan")
+    action = str(p.get("action") or "list")
+    if action in ("list", "windows"):
+        cmd_windows()
+    target = p.get("window") or p.get("app")
+    w = resolve(target) if target else None
+    if action == "focus":
+        if not w:
+            fail(no_window(target or "front")["error"])
+        focus_window(w)
+        out({"ok": True, "done": f"Focused {w.get('app')} — {w.get('title', '')}"})
+    if action == "workspace":
+        ws = safe_name(p.get("workspace"), "workspace")
+        if not dispatch(f"hl.dsp.focus({{ workspace = '{ws}' }})"):
+            fail(f"Couldn't switch to workspace {ws}.")
+        out({"ok": True, "done": f"Switched to workspace {ws}"})
+    if action == "move":
+        ws = safe_name(p.get("workspace"), "workspace")
+        if not w:
+            fail("window is required")
+        if not dispatch(f"hl.dsp.window.move({{ workspace = '{ws}', window = 'address:{w.get('id')}' }})"):
+            fail(f"Couldn't move {w.get('app')} to workspace {ws}.")
+        out({"ok": True, "done": f"Moved {w.get('app')} to workspace {ws}"})
+    if action == "close":
+        if not w:
+            fail(no_window(target or "front")["error"])
+        dispatch(f"hl.dsp.window.close({{ window = 'address:{w.get('id')}' }})")
+        out({"ok": True, "done": f"Closed {w.get('app')}"})
+    if action == "fullscreen":
+        if not w:
+            fail(no_window(target or "front")["error"])
+        if not focus_window(w):
+            fail(f"Couldn't focus {w.get('app')} to change fullscreen.")
+        mode = p.get("mode")
+        if mode and mode not in ("fullscreen", "maximized", "toggle"):
+            fail("mode must be fullscreen, maximized or toggle")
+        expr = "hl.dsp.window.fullscreen({ action = 'toggle'%s })" % (f", mode = '{mode}'" if mode else "")
+        dispatch(expr)
+        out({"ok": True, "done": f"Toggled fullscreen for {w.get('app')}"})
+    # The window dispatchers act on the focused window, so focus the target first and say so if that fails.
+    if action in ("float", "pin", "center", "resize", "swap", "pseudo", "bring_to_top"):
+        if not w:
+            fail(no_window(target or "front")["error"])
+        if not focus_window(w):
+            fail(f"Couldn't focus {w.get('app')}.")
+        if action == "float":
+            dispatch("hl.dsp.window.float({ action = 'toggle' })")
+            out({"ok": True, "done": f"Toggled floating for {w.get('app')}"})
+        if action == "pin":
+            dispatch("hl.dsp.window.pin({ action = 'toggle' })")
+            out({"ok": True, "done": f"Toggled pinning for {w.get('app')}"})
+        if action == "center":
+            dispatch("hl.dsp.window.center()")
+            out({"ok": True, "done": f"Centred {w.get('app')} (floating windows only)"})
+        if action == "resize":
+            dx, dy = int(p.get("width") or p.get("x") or 0), int(p.get("height") or p.get("y") or 0)
+            rel = "true" if p.get("relative", True) else "false"
+            dispatch(f"hl.dsp.window.resize({{ x = {dx}, y = {dy}, relative = {rel} }})")
+            out({"ok": True, "done": f"Resized {w.get('app')} by {dx}, {dy}" if p.get("relative", True) else f"Resized {w.get('app')} to {dx}, {dy}"})
+        if action == "swap":
+            other = p.get("target") or p.get("with")
+            if other:
+                o = resolve(other)
+                if not o:
+                    fail(no_window(other)["error"])
+                dispatch(f"hl.dsp.window.swap({{ target = hl.get_window('address:{o.get('id')}') }})")
+                out({"ok": True, "done": f"Swapped {w.get('app')} with {o.get('app')} — {o.get('title', '')}"})
+            direction = p.get("direction") or "right"
+            if direction not in ("up", "down", "left", "right"):
+                fail("direction must be up, down, left or right")
+            dispatch(f"hl.dsp.window.swap({{ direction = '{direction}' }})")
+            out({"ok": True, "done": f"Swapped {w.get('app')} {direction}"})
+        if action == "pseudo":
+            dispatch("hl.dsp.window.pseudo({ action = 'toggle' })")
+            out({"ok": True, "done": f"Toggled pseudo-tiling for {w.get('app')}"})
+        if action == "bring_to_top":
+            dispatch("hl.dsp.window.bring_to_top()")
+            out({"ok": True, "done": f"Brought {w.get('app')} to the top"})
+    if action in ("special", "toggle_special"):
+        name = safe_name(p.get("name") or p.get("workspace"), "special workspace")
+        dispatch(f"hl.dsp.workspace.toggle_special('{name}')")
+        out({"ok": True, "done": f"Toggled the special workspace {name}"})
+    if action == "move_to_special":
+        name = safe_name(p.get("name") or p.get("workspace"), "special workspace")
+        if not w:
+            fail("window is required")
+        dispatch(f"hl.dsp.window.move({{ workspace = 'special:{name}', window = 'address:{w.get('id')}' }})")
+        out({"ok": True, "done": f"Moved {w.get('app')} to the special workspace {name}"})
+    if action == "focus_direction":
+        direction = p.get("direction") or "right"
+        if direction not in ("up", "down", "left", "right"):
+            fail("direction must be up, down, left or right")
+        dispatch(f"hl.dsp.focus({{ direction = '{direction}' }})")
+        out({"ok": True, "done": f"Focused {direction}"})
+    if action == "focus_monitor":
+        monitor = safe_name(p.get("monitor") or p.get("name"), "monitor")
+        dispatch(f"hl.dsp.focus({{ monitor = '{monitor}' }})")
+        out({"ok": True, "done": f"Focused monitor {monitor}"})
+    if action == "workspace_to_monitor":
+        monitor = safe_name(p.get("monitor") or p.get("name"), "monitor")
+        dispatch(f"hl.dsp.workspace.move({{ monitor = '{monitor}' }})")
+        out({"ok": True, "done": f"Moved this workspace to monitor {monitor}"})
+    if action in ("last", "urgent"):
+        dispatch("hl.dsp.focus({ last = true })" if action == "last" else "hl.dsp.focus({ urgent_or_last = true })")
+        out({"ok": True, "done": "Focused the last window" if action == "last" else "Focused the urgent or last window"})
+    if action == "cycle":
+        nxt = "true" if p.get("next", True) else "false"
+        dispatch(f"hl.dsp.window.cycle_next({{ next = {nxt} }})")
+        out({"ok": True, "done": "Cycled to the next window" if p.get("next", True) else "Cycled to the previous window"})
+    if action in ("monitors", "workspaces"):
+        kind = "monitors" if action == "monitors" else "workspaces"
+        data = hypr(kind)
+        if action == "monitors":
+            lines = []
+            for m in data if isinstance(data, list) else []:
+                lines.append(f"{m.get('name')}: {m.get('width')}x{m.get('height')} at {m.get('x')},{m.get('y')} scale {m.get('scale')} — workspace {m.get('activeWorkspace', {}).get('name')}" + (" (focused)" if m.get("focused") else ""))
+            out({"ok": True, "text": "\n".join(lines) or "No monitors."})
+        lines = []
+        for ws in data if isinstance(data, list) else []:
+            lines.append(f"{ws.get('id')}: {ws.get('name')} — {ws.get('windows')} window(s)" + (" (visible)" if ws.get("visible") else "") + (f" on {ws.get('monitor')}" if ws.get("monitor") else ""))
+        out({"ok": True, "text": "\n".join(lines) or "No workspaces."})
+    if action == "rename_workspace":
+        name = safe_name(p.get("name") or p.get("workspace"), "workspace")
+        dispatch(f"hl.dsp.workspace.rename('{name}')")
+        out({"ok": True, "done": f"Renamed this workspace to {name}"})
+    if action == "swap_monitors":
+        m1 = safe_name(p.get("monitor") or p.get("monitor1"), "monitor")
+        m2 = safe_name(p.get("monitor2"), "monitor")
+        dispatch(f"hl.dsp.workspace.swap_monitors({{ monitor1 = '{m1}', monitor2 = '{m2}' }})")
+        out({"ok": True, "done": f"Swapped the workspaces on {m1} and {m2}"})
+    if action in ("group_toggle", "group_next", "group_prev"):
+        expr = {"group_toggle": "hl.dsp.group.toggle()", "group_next": "hl.dsp.group.next()", "group_prev": "hl.dsp.group.prev()"}[action]
+        dispatch(expr)
+        out({"ok": True, "done": {"group_toggle": "Toggled the window group", "group_next": "Focused the next group", "group_prev": "Focused the previous group"}[action]})
+    if action == "dpms":
+        state = str(p.get("mode") or p.get("value") or "toggle").lower()
+        if state not in ("on", "off", "toggle"):
+            fail("mode must be on, off or toggle")
+        monitor = safe_name(p.get("monitor"), "monitor") if p.get("monitor") else None
+        expr = f"hl.dsp.dpms({{ action = '{state}'" + (f", monitor = '{monitor}'" if monitor else "") + " })"
+        dispatch(expr)
+        out({"ok": True, "done": f"Turned displays {state}" + (f" on {monitor}" if monitor else "")})
+    if action in ("option", "getoption", "setoption"):
+        key = str(p.get("key") or p.get("name") or "")
+        if not key:
+            fail("key is required")
+        value = p.get("value")
+        if value is None or action == "getoption":
+            r = sh(["hyprctl", "getoption", key])
+            out({"ok": r.returncode == 0, "text": r.stdout.strip() or r.stderr.strip() or f"No option called {key}."})
+        kind = OPTION_WRITES.get(key)
+        if not kind:
+            fail(f"{key} can't be changed from here; use the Hyprland settings or its config.")
+        if kind == "int":
+            try:
+                n = int(value)
+            except Exception:
+                fail(f"{key} needs a whole number.")
+            if not 0 <= n <= 4096:
+                fail(f"{key} is out of range.")
+            value = str(n)
+        elif kind == "float":
+            try:
+                n = float(value)
+            except Exception:
+                fail(f"{key} needs a number between 0 and 1.")
+            if not 0 <= n <= 1:
+                fail(f"{key} is out of range.")
+            value = str(n)
+        else:
+            v = str(value).strip().lower()
+            if v not in ("true", "false", "1", "0", "yes", "no", "on", "off"):
+                fail(f"{key} needs true or false.")
+            value = "true" if v in ("true", "1", "yes", "on") else "false"
+        r = sh(["hyprctl", "keyword", key, value])
+        out({"ok": r.returncode == 0, "done": f"Set {key} to {value}" if r.returncode == 0 else f"Couldn't set {key}: {r.stderr.strip() or r.stdout.strip()}"})
+    if action == "open":
+        app = p.get("app") or target
+        if not app:
+            fail("app is required")
+        out({"ok": True, "done": open_app(app)})
+    if action == "drag":
+        a, b = p.get("from"), p.get("to")
+        if not (isinstance(a, list) and isinstance(b, list) and len(a) == 2 and len(b) == 2):
+            fail("from and to are required")
+        for pt in (a, b):
+            if (spot := window_at(float(pt[0]), float(pt[1]))) and (blocked := hands_off(spot)):
+                fail(f"Blocked for safety: that drag is on {blocked}, and I never click or drag in it.")
+        cursor_move(a[0], a[1])
+        time.sleep(0.08)
+        ydotool("click", "0x40")
+        time.sleep(0.08)
+        steps = 12
+        for i in range(1, steps + 1):
+            x = a[0] + (b[0] - a[0]) * i / steps
+            y = a[1] + (b[1] - a[1]) * i / steps
+            cursor_move(x, y)
+            time.sleep(0.02)
+        ydotool("click", "0x80")
+        out({"ok": True, "done": f"Dragged from {a} to {b}"})
+    if action == "click":
+        x, y = p.get("x"), p.get("y")
+        if x is None or y is None:
+            fail("x and y are required")
+        if (spot := window_at(float(x), float(y))) and (blocked := hands_off(spot)):
+            fail(f"Blocked for safety: that spot is on {blocked}, and I never click in it.")
+        click_at(float(x), float(y), int(p.get("button") or 1))
+        out({"ok": True, "done": f"Clicked {x},{y}"})
+    if action == "scroll":
+        x, y = p.get("x"), p.get("y")
+        amount = int(p.get("amount") or 3)
+        if x is not None and y is not None:
+            if (spot := window_at(float(x), float(y))) and (blocked := hands_off(spot)):
+                fail(f"Blocked for safety: that spot is on {blocked}, and I never scroll in it.")
+            cursor_move(float(x), float(y))
+        else:
+            pos = cursor_pos()
+            if not pos:
+                fail("Couldn't tell where the pointer is; give x and y.")
+            spot = window_at(float(pos[0]), float(pos[1]))
+            if spot and (blocked := hands_off(spot)):
+                fail(f"Blocked for safety: the pointer is on {blocked}, and I never scroll in it.")
+        button = "4" if (p.get("direction") or "down") == "up" or amount > 0 and (p.get("direction") == "up") else "5"
+        if p.get("direction") == "up":
+            button = "4"
+        for _ in range(min(abs(amount), 15)):
+            ydotool("click", button)
+            time.sleep(0.03)
+        out({"ok": True, "done": "Scrolled"})
+    fail(f"unknown window action {action}")
+
+
+def cmd_selftest_safety():
+    checks = []
+
+    def check(name, ok):
+        checks.append({"name": name, "ok": bool(ok)})
+
+    check("terminals are hands-off", hands_off({"app": "kitty"}) == "kitty" and hands_off({"app": "Alacritty"}) == "Alacritty")
+    check("password managers are hands-off", hands_off({"app": "KeePassXC"}) == "KeePassXC")
+    check("everyday apps are not", hands_off({"app": "zen"}) is None and hands_off({"app": "notepad"}) is None)
+    check("risky clicks", risky("Delete account") and risky("Place your order") and risky("削除する") and not risky("Save"))
+    check("unsafe names refused", SAFE_NAME.match("1; rm -rf /") is None and SAFE_NAME.match("dev 2") is not None)
+    check("only cosmetic options can be set", "general:gaps_in" in OPTION_WRITES and "input:kb_layout" not in OPTION_WRITES and "binds:workspace_back_and_forth" not in OPTION_WRITES)
+    out({"ok": all(c["ok"] for c in checks), "checks": checks})
+
+
+def main():
+    args = sys.argv[1:]
+    if not args:
+        fail("no command")
+    cmd = args[0]
+    if cmd in ("trusted", "guide", "screencheck"):
+        out({"ok": True, "supported": True})
+    if cmd == "windows":
+        cmd_windows()
+    if cmd == "front":
+        cmd_front()
+    if cmd == "locate":
+        cmd_locate(args[1] if len(args) > 1 else "front")
+    if cmd == "capture":
+        cmd_capture(args[1], args[2], args[3] if len(args) > 3 else None, args[4] if len(args) > 4 else None, int(args[5]) if len(args) > 5 and args[5].isdigit() else 900)
+    if cmd == "ui":
+        cmd_ui(args[1] if len(args) > 1 else "front", len(args) > 2 and args[2] == "controls")
+    if cmd == "locate-control":
+        cmd_locate_control(args[1], args[2])
+    if cmd == "find-text":
+        cmd_find_text(args[1], args[2], len(args) > 3 and args[3] == "scroll")
+    if cmd == "ocr-find":
+        cmd_ocr_find(args[1], args[2], len(args) > 3 and args[3] == "all")
+    if cmd == "refine":
+        cmd_refine(args[1], args[2] if len(args) > 2 else None)
+    if cmd == "act":
+        cmd_act(args[1])
+    if cmd == "tab":
+        try:
+            plan = json.loads(args[1])
+        except Exception:
+            fail("bad tab arguments")
+        t = plan.get("window") or (("app:" + plan["app"]) if plan.get("app") else "front")
+        w = resolve(t)
+        if not w:
+            fail(f"No matching window is open ({plan.get('app') or t}).")
+        if blocked := hands_off(w):
+            fail(f"Blocked for safety: {blocked} holds a terminal or passwords, and I never switch its tabs or type in it.")
+        if not focus_window(w):
+            fail(f"Couldn't focus {w.get('app')}.")
+        out({"ok": True, "done": zen_activate_tab(w, plan.get("workspace"), plan.get("index"), plan.get("text"), plan.get("url")), "window": w})
+    if cmd == "select":
+        cmd_select(args[1])
+    if cmd == "wm":
+        cmd_wm(args[1])
+    if cmd == "pointer":
+        cmd_pointer(args[1])
+    if cmd == "selftest-type":
+        cmd_selftest_type()
+    if cmd == "selftest-safety":
+        cmd_selftest_safety()
+    if cmd == "selftest-drag":
+        cmd_selftest_drag()
+    fail(f"unknown command {cmd}")
+
+
+if __name__ == "__main__":
+    main()

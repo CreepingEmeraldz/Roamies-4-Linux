@@ -49,6 +49,14 @@ jobs:
         working-directory: ${{ github.workspace }}
         run: node .github/scripts/check-inline-node.mjs
 
+      # The Linux hands helper is Python: at least parse it everywhere it ships from.
+      - name: Check the Linux hands helper
+        if: runner.os == 'Linux'
+        working-directory: showcase/tauri
+        run: |
+          python3 -c "compile(open('src-tauri/hands-linux/roamies-hands').read(), 'roamies-hands', 'exec')"
+          python3 src-tauri/hands-linux/roamies-hands selftest-safety
+
       # Tauri's Linux build dependencies (v2.tauri.app/start/prerequisites, Debian list).
       - name: Install Tauri system dependencies
         if: runner.os == 'Linux'
@@ -201,12 +209,22 @@ jobs:
           echo '{"onboarded":true,"setupVersion":2,"voice":false}' > "$ROAMIES_DATA_DIR/sidekick.json"
           trap 'kill $pid 2>/dev/null; docker rm -f mutter >/dev/null 2>&1' EXIT
           pid=
-          docker run -d --name mutter --network host -e DISPLAY -v /tmp/.X11-unix:/tmp/.X11-unix ubuntu:24.04 bash -c \
-            'apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends mutter dbus libgl1-mesa-dri >/dev/null && dpkg-query -W mutter && exec dbus-run-session -- mutter --x11 --replace' >/dev/null
+          # The image's apt only knows archive.ubuntu.com and security.ubuntu.com, which stalled for hours from the
+          # runners on 2026-11-23 (they took the connection and never answered). The runner's own apt goes through a
+          # mirror list (/etc/apt/apt-mirrors.txt, the Azure mirror first), so the container gets that list too. Without
+          # the file it keeps its own sources.
+          docker run -d --name mutter --network host -e DISPLAY -v /tmp/.X11-unix:/tmp/.X11-unix \
+            -v /etc/apt/apt-mirrors.txt:/etc/apt/apt-mirrors.txt:ro ubuntu:24.04 bash -c \
+            '[ -s /etc/apt/apt-mirrors.txt ] && cat /etc/apt/apt-mirrors.txt && sed -i "s|^URIs: .*|URIs: mirror+file:/etc/apt/apt-mirrors.txt|" /etc/apt/sources.list.d/ubuntu.sources; A="-o Acquire::http::Timeout=30 -o Acquire::Retries=3"; apt-get update -q $A && DEBIAN_FRONTEND=noninteractive apt-get install -y -q $A --no-install-recommends mutter dbus libgl1-mesa-dri | grep -E "^(Get|Err|Ign|Fetched|E:|W:)" ; dpkg-query -W mutter && exec dbus-run-session -- mutter --x11 --replace' >/dev/null
+          # Up to 15 minutes: Ubuntu's mirrors sometimes take 10 minutes for this install (2026-11-23). The container's
+          # apt gives up on a stalled mirror after 30 s, prints each download with a time, and the wait ends if it exits.
           wm=false
-          for _ in $(seq 240); do xprop -root _NET_SUPPORTING_WM_CHECK | grep -q 'window id' && { wm=true; break; }; sleep 1; done
-          docker logs mutter 2>&1 | tail -15
-          $wm || { echo "Mutter didn't start"; exit 1; }
+          for _ in $(seq 900); do
+            xprop -root _NET_SUPPORTING_WM_CHECK | grep -q 'window id' && { wm=true; break; }
+            [ "$(docker inspect -f '{{.State.Running}}' mutter 2>/dev/null)" = true ] || { echo "The Mutter container exited"; break; }
+            sleep 1
+          done
+          if $wm; then docker logs mutter 2>&1 | tail -15; else docker logs -t mutter 2>&1 | tail -120; echo "Mutter didn't start"; exit 1; fi
           src-tauri/target/debug/roamies > "$RUNNER_TEMP/app-mutter.log" 2>&1 &
           pid=$!
           overlay='' area=0

@@ -149,10 +149,14 @@ const actionsOff = `File edits and commands are switched off. Tell the user to t
 
 // "hands": the bundled helper that captures one window or area and reads/controls other apps (hands/main.swift on
 // macOS, hands-win on Windows; same commands and JSON). A .mjs one (a test's fake) runs on this Node.
-const HANDS = process.env.ROAMIES_HANDS || '';
+// Linux reads and works other apps through the accessibility helper (ATSPI), whatever the desktop: the Hyprland-only
+// hands script that upstream bundles is not used there.
+const HANDS = process.platform === 'linux' ? '' : process.env.ROAMIES_HANDS || '';
 // Linux: the bundled accessibility helper (roamies-atspi), which only reads: list_windows and read_window.
 const LINUX_ACT = "Do things in another app, over its accessibility tree: press buttons and links, fill fields, pick options, press keys. Steps run in order: put a whole task in one call. {do:'click_text', text}: a link, button or tab by its visible words. {do:'fill', field, text}: one text field by its label (or id); replaces its text and checks it took. {do:'choose', field, option}: an option in a dropdown or menu. {do:'click', id} and {do:'focus', id} use ids from read_window. {do:'type', text} only with the cursor already in a field; {do:'key', key} ('return', 'tab', 'escape', 'ctrl+a') needs the wtype tool, so press a Search or Submit button with click_text when you can. {do:'scroll', direction:'down'|'up', amount} scrolls the window in front by that many screens (default 1, up to 10); to_end:true goes to the end of a feed that loads more as you reach the bottom; it needs wtype, and a text field with the cursor must be clicked out of first. No hovering or clicking at pixels here: read_window already shows the whole page, scrolled out of view too, so only scroll to load more or to bring something into the user's view. Web addresses: use open, not the address bar. The result shows the window after the steps, with fresh ids and values: check it there. Never pay, send or delete unless asked for exactly that; delete, pay, send and sign-out clicks ask the user themselves, so call this straight away when asked to click one.";
 const ATSPI = LINUX ? process.env.ROAMIES_ATSPI || '' : '';
+const HANDS_OK = process.platform === 'darwin' || !!HANDS;
+const CAN_RUN = !!HANDS;
 const runHands = (args, opts) => (HANDS.endsWith('.mjs') ? run(process.execPath, [HANDS, ...args], opts) : run(HANDS, args, opts));
 const STALE_ID = 'The page changed since read_window, so that id is out of date. Call read_window again and use the new ids.';
 // An app named in read_window or act_in_app that isn't open: open it (with the open tool's safety check) and wait
@@ -171,9 +175,34 @@ async function launchApp(name, hands) {
   return false;
 }
 // read_window and act_in_app output: visible controls first, then up to 15 scrolled out of view.
+// Windows grouped by workspace, as the Linux helper reports them: the current one marked, fullscreen and floating
+// state, and the frontmost app. Exported for the desktop snapshot in the sidecar.
+export function formatWindows(res) {
+  const ws = res?.activeWorkspace;
+  const groups = new Map();
+  for (const w of res?.windows ?? []) {
+    const key = String(w.workspace ?? '?');
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(w);
+  }
+  const keys = [...groups.keys()].sort((a, b) => (Number(a) || 999) - (Number(b) || 999));
+  const out = [];
+  for (const key of keys) {
+    out.push(`Workspace ${key}${String(key) === String(ws) ? ' (current)' : ''}:`);
+    for (const w of groups.get(key)) {
+      const fs = w.fullscreen === 2 ? '  (fullscreen)' : w.fullscreen ? '  (maximized)' : '';
+      out.push(`  window:${w.id}  ${w.app}${w.title ? ` — ${w.title}` : ''}${fs}${w.floating ? '  (floating)' : ''}${w.frontApp ? '  (frontmost app)' : ''}`);
+    }
+  }
+  return out.join('\n') || 'No windows open.';
+}
+
 function controlList(controls, texts = []) {
+  controls = Array.isArray(controls) ? controls : [];
+  if (typeof texts === 'string') texts = [texts];
+  if (!Array.isArray(texts)) texts = [];
   const vis = controls.filter((c) => !c.offscreen), off = controls.filter((c) => c.offscreen).slice(0, 15);
-  const line = (c) => `${c.id} ${c.role}${c.label ? ` "${c.label}"` : ''}${c.value ? ` = "${c.value}"` : ''}${c.focused ? ' (focused)' : ''}`;
+  const line = (c) => `${c.id} ${c.role}${c.label ? ` "${c.label}"` : ''}${c.value ? ` = "${c.value}"` : ''}${c.focused ? ' (focused)' : ''}${c.current ? ' (current tab)' : ''}`;
   const labels = new Set(controls.map((c) => c.label));
   const words = texts.filter((t) => !labels.has(t));
   return vis.map(line).join('\n')
@@ -269,7 +298,7 @@ export function oneYesNoAtATime(ask) {
   };
 }
 
-export function createTools({ allowActions, ui, ask, openUrl, onCommitments, focus = null, firedReminders = () => [], showList, fmtWhen, commitmentsText, userName, onPlan = () => {}, speak = () => false, onHandoff = () => {}, onMissingDep = () => {}, watchClicks = () => {}, onInkGone = () => {}, askShell = async () => ({ ok: false, error: 'Roamies isn\'t running.' }), workdir = HOME, own = null, sideSearch = async () => null, pointScale = () => 'pixels', skipAllow = () => false, commands = () => ({}), jobs = null, skills = null }) {
+export function createTools({ allowActions, ui, ask, openUrl, onCommitments, focus = null, firedReminders = () => [], showList, fmtWhen, commitmentsText, userName, onPlan = () => {}, speak = () => false, onHandoff = () => {}, onMissingDep = () => {}, watchClicks = () => {}, onInkGone = () => {}, askShell = async () => ({ ok: false, error: 'Roamies isn\'t running.' }), workdir = HOME, own = null, sideSearch = async () => null, pointScale = () => 'pixels', skipAllow = () => false, commands = () => ({}), jobs = null, skills = null, saveAvatarPin = () => {} }) {
   // Relative paths (and run_command) start in workdir: ~/Roamies for the chat, its own folder for an agent.
   const at = (p) => { const s = String(p ?? ''); return /^~(?=$|\/|\\)/.test(s) || path.isAbsolute(s) || /^[a-z]:[\\/]/i.test(s) ? s : path.join(workdir, s); };
   const where = workdir === HOME ? "the user's home folder" : `its working folder (${workdir})`;
@@ -304,8 +333,9 @@ export function createTools({ allowActions, ui, ask, openUrl, onCommitments, foc
   async function hands(...args) {
     if (!HANDS) { if (ATSPI) return atspi(...args); throw new Error('This needs the Roamies app.'); }
     // Acting in an app may take the real cursor: meanwhile clicks go through the overlay, even where the Sidekick or
-    // its bubble sits on the spot being clicked.
-    const acting = args[0] === 'act';
+    // its bubble sits on the spot being clicked. Window commands move or focus things too; the read-only ones don't.
+    const wmAction = args[0] === 'wm' ? (() => { try { return JSON.parse(args[1]).action; } catch { return null; } })() : null;
+    const acting = args[0] === 'act' || (args[0] === 'wm' && !['list', 'monitors', 'workspaces'].includes(wmAction));
     if (acting) ui({ kind: 'hands', on: true });
     // While it acts, the Sidekick hops to where each step lands. Only the spot is passed on, never what is typed.
     const onLine = acting ? (line) => {
@@ -340,16 +370,23 @@ export function createTools({ allowActions, ui, ask, openUrl, onCommitments, foc
   }
   async function readWindow(target = 'front') {
     const t = String(target || 'front');
-    const read = () => Promise.all([hands('ui', t === 'front' ? 'front' : `app:${t}`), hands('windows').catch(() => null)]);
+    const read = () => Promise.all([hands('ui', t === 'front' ? 'front' : t.startsWith('window:') ? t : `app:${t}`), hands('windows').catch(() => null)]);
     const [res, all] = await read().catch(async (err) => {
       if (t === 'front' || !/No matching window/.test(String(err?.message ?? err)) || !(await launchApp(t, hands))) throw err;
       return read();
     });
-    lastRead = { win: res.window.id, app: res.window.app, controls: res.controls, turn };
-    const others = (all?.windows ?? []).filter((w) => w.app === res.window.app && w.id !== res.window.id).length;
-    const head = `${res.window.app}${res.window.title ? ` — ${res.window.title}` : ''}${others ? ` (front window; ${res.window.app} has ${others} more, which draw with text also searches)` : ''}`;
-    if (!res.controls.length) return `${head}\n${res.note}`;
-    return `${head}${res.note ? `\n${res.note}` : ''}\n${controlList(res.controls, res.texts)}${res.elsewhere?.length ? `\nElsewhere on the page (scrolled out of view): ${res.elsewhere.join(' | ')}` : ''}`;
+    // A helper without accessibility (Linux without AT-SPI) reports text only, so every field is checked rather than assumed.
+    const win = res.window ?? { id: null, app: t, title: '' };
+    const controls = Array.isArray(res.controls) ? res.controls : [];
+    const texts = Array.isArray(res.texts) ? res.texts : res.texts ? [String(res.texts)] : [];
+    const elsewhere = Array.isArray(res.elsewhere) ? res.elsewhere : res.elsewhere ? [String(res.elsewhere)] : [];
+    const appName = win.app ?? t;
+    lastRead = { win: win.id, app: appName, controls, turn };
+    const others = (all?.windows ?? []).filter((w) => w.app === appName && w.id !== win.id).length;
+    const head = `${appName}${win.title ? ` — ${win.title}` : ''}${others ? ` (front window; ${appName} has ${others} more, which draw with text also searches)` : ''}`;
+    if (!controls.length && !texts.length) return `${head}\n${res.note || 'No accessibility tree was available and no text was read from it (OCR found nothing). Use take_screenshot and click_at, or click_text with the visible words.'}`;
+    if (!controls.length) return `${head}\nText on screen: ${texts.join(' | ')}`;
+    return `${head}\n${controlList(controls, texts)}${elsewhere.length ? `\nElsewhere on the page (scrolled out of view): ${elsewhere.join(' | ')}` : ''}`;
   }
   // A yes/no in an input bubble. Stop (or the turn ending) counts as no.
   // Only the yes/no is skipped (skipAllow: the user turned "Skip Allow prompts" on). BLOCK verdicts never reach here.
@@ -433,7 +470,7 @@ export function createTools({ allowActions, ui, ask, openUrl, onCommitments, foc
   async function screenshot({ target = 'screen' } = {}, ctx) {
     const file = path.join(os.tmpdir(), `sidekick-${Date.now()}.jpg`);
     // Windows without the helper (or when it fails on the whole screen): PowerShell's screenshot below.
-    const viaHands = process.platform === 'darwin' || (process.platform === 'win32' && HANDS);
+    const viaHands = CAN_RUN;
     const t = String(target || 'screen').trim();
     const shot = viaHands ? await handsShot(file, t).catch((e) => { if (process.platform === 'win32' && t === 'screen') return null; throw e; }) : null;
     if (shot) return shot;
@@ -526,7 +563,7 @@ export function createTools({ allowActions, ui, ask, openUrl, onCommitments, foc
   // its title, a document being edited, isn't the screen changing).
   // Its rect and app too, so a click can be told to be in it.
   const frontWin = async () => {
-    if (!HANDS) return null;
+    if (!CAN_RUN) return null;
     const r = await runHands(['locate', 'front'], { timeout: 900 });
     try { const w = JSON.parse(r.stdout.trim().split('\n').pop() || '{}').window; return w ? { key: `${w.id}|${(w.bounds ?? []).map((v) => Math.round(v / 4)).join(',')}`, rect: w.bounds ?? null, app: w.app ?? '' } : null; } catch { return null; }
   };
@@ -535,7 +572,7 @@ export function createTools({ allowActions, ui, ask, openUrl, onCommitments, foc
   // own ("(3) Inbox", "— Edited"). '' when it can't be read, which never counts as a change.
   const pageOf = ({ url, title } = {}) => (url ? String(url).replace(/#.*$/, '') : String(title ?? '').replace(/^\(\d+\)\s*/, '').replace(/\s+[—–-]\s+Edited$/i, '').trim());
   const frontPage = async () => {
-    if (!HANDS) return '';
+    if (!CAN_RUN) return '';
     const r = await runHands(['front'], { timeout: 900 });
     try { return pageOf(JSON.parse(r.stdout.trim().split('\n').pop() || '{}')); } catch { return ''; }
   };
@@ -555,7 +592,7 @@ export function createTools({ allowActions, ui, ask, openUrl, onCommitments, foc
   }
   // When another window comes to the front, or that window moves or closes, the drawing no longer sits on what it was about.
   function watchStale() {
-    if (!HANDS || ink.watch) return;
+    if (!CAN_RUN || ink.watch) return;
     ink.watch = setInterval(async () => {
       if (ink.active) return;
       if (!windowBound()) { clearInterval(ink.watch); ink.watch = null; watchClicks(false); return; }
@@ -570,7 +607,7 @@ export function createTools({ allowActions, ui, ask, openUrl, onCommitments, foc
     ink.watch.unref?.();
   }
   // Steps that change what a window shows: the agent doing one is the screen changing under a drawing.
-  const CHANGING = new Set(['click', 'click_text', 'press_button', 'key', 'click_at', 'choose', 'hover']);
+  const CHANGING = new Set(['click', 'click_text', 'press_button', 'key', 'click_at', 'choose', 'hover', 'tab', 'workspace', 'open_tab', 'close_tab', 'move_tab', 'workspace_create', 'workspace_rename']);
   const agentChangesScreen = () => { if (windowBound() && !ink.active) screenChanged('agent'); };
   const toClipboard = (text) => copyText(text, askShell);
   // How each kind of place is found. retry: just after a click, when a menu or dialog may still be opening.
@@ -630,7 +667,7 @@ export function createTools({ allowActions, ui, ask, openUrl, onCommitments, foc
         }
       },
       async id(n) {
-        if (!HANDS) throw new Error('read_window ids need the Roamies app; give x, y from a screenshot instead.');
+        if (!CAN_RUN) throw new Error('read_window ids need the Roamies app; give x, y from a screenshot instead.');
         live ??= await liveControls(spec);
         const c = live(n);
         if (c.offscreen) throw new Error(`"${c.label || c.role}" is further down the page. Use its text instead; that scrolls to it.`);
@@ -639,7 +676,7 @@ export function createTools({ allowActions, ui, ask, openUrl, onCommitments, foc
       // A box guessed from screenshot pixels, fitted to what's really drawn there. The guesses of one beat come
       // together (its marks are found at once), so they go to the helper in one call.
       refine(rect) {
-        if (!HANDS || spec === 'screen' && !lastShot) return Promise.resolve(null);
+        if (!CAN_RUN || spec === 'screen' && !lastShot) return Promise.resolve(null);
         return new Promise((resolve) => {
           fitQueue ??= { list: [] };
           fitQueue.list.push({ rect, resolve });
@@ -653,13 +690,13 @@ export function createTools({ allowActions, ui, ask, openUrl, onCommitments, foc
       },
       // The controls on screen now (once per segment), for loops drawn from screenshot pixels to snap to.
       async snap(rect) {
-        if (!HANDS || spec === 'screen') return null;
+        if (!CAN_RUN || spec === 'screen') return null;
         controls ??= hands('ui', spec, 'controls').then((r) => (r.controls ?? []).filter((c) => !c.offscreen && c.bounds).map((c) => c.bounds), () => []);
         return snapRect(rect, await controls);
       },
       // The open windows' boxes, front to back (once per segment), for frames drawn round a whole window.
       windows() {
-        if (!HANDS) return Promise.resolve([]);
+        if (!CAN_RUN) return Promise.resolve([]);
         wins ??= hands('windows').then((r) => (r.windows ?? []).map((w) => w.bounds).filter(Array.isArray), () => []);
         return wins;
       },
@@ -706,7 +743,7 @@ export function createTools({ allowActions, ui, ask, openUrl, onCommitments, foc
       else if (m.kind === 'open') { await tools.find((x) => x.name === 'open').execute({ target: m.url }); }
       else if (m.kind === 'handoff') onHandoff(m.task || m.text || m.label || 'a task');
       else if (m.kind === 'type') {
-        if (!HANDS) throw new Error('Typing into apps needs the Roamies app.');
+        if (!CAN_RUN) throw new Error('Typing into apps needs the Roamies app.');
         const src = m.at.src, app = t === 'front' || t === 'screen' ? {} : { app: t };
         const steps = src.text != null ? [{ do: 'fill', field: src.text, text: m.text }]
           : src.id != null ? [{ do: 'click', id: m.at.live }, { do: 'type', text: m.text }]
@@ -744,7 +781,7 @@ export function createTools({ allowActions, ui, ask, openUrl, onCommitments, foc
     const stopped = () => { if (ctx?.signal?.aborted) cancelInk(); return 'Stopped.'; };
     // Where there's room for cards: the screen minus the front window; and what's on it, so names avoid covering words.
     const hasCards = beats.some((b) => b.marks.some((m) => CARDS.includes(m.kind)));
-    const win = hasCards && HANDS ? (await hands('locate', 'front').catch(() => null))?.window?.bounds ?? null : null;
+    const win = hasCards && CAN_RUN ? (await hands('locate', 'front').catch(() => null))?.window?.bounds ?? null : null;
     const busy = lastRead?.turn === turn ? lastRead.controls.filter((c) => !c.offscreen && c.bounds).slice(0, 300).map((c) => c.bounds) : [];
     ink.active++;
     // Lookups are shared until a click or hover (then the screen may have changed, and words are retried a moment).
@@ -864,16 +901,75 @@ export function createTools({ allowActions, ui, ask, openUrl, onCommitments, foc
       description: "Look at the screen, only for what words can't show (images, layout, colours). target: 'front' (the window they're in: the default for 'this' or 'here'), an app name ('browser', 'Figma'; works behind other windows), 'window:<id>' from list_windows, or 'screen' (only when it must be everything).",
       parameters: z.object({ target: z.string().optional() }), execute: screenshot,
     },
+    {
+      name: 'pin_avatar',
+      description: "Keep the Roamie in one place on the screen instead of letting it follow the cursor and roam: 'stay in the top right' means {corner:'top-right'}. corner: top-left, top-right, bottom-left, bottom-right or center (add margin for the gap from the edge, default 14). Or put it anywhere with x and y in screen pixels. release: true frees it to follow the cursor again. It stays pinned until moved or released, including across restarts.",
+      parameters: z.object({
+        corner: z.enum(['top-left', 'top-right', 'bottom-left', 'bottom-right', 'center']).optional(),
+        x: z.number().optional(), y: z.number().optional(), margin: z.number().optional(), release: z.boolean().optional(),
+      }),
+      execute: async ({ corner, x, y, margin, release }) => {
+        if (release) {
+          saveAvatarPin(null);
+          ui({ kind: 'avatar_pin', release: true });
+          return 'The Roamie is free again: it follows the cursor and roams the screen.';
+        }
+        if (!corner && !Number.isFinite(x) && !Number.isFinite(y)) throw new Error('Give a corner (top-right, bottom-left, ...) or x and y in screen pixels.');
+        const pin = { corner: corner ?? null, x: Number.isFinite(x) ? Math.round(x) : null, y: Number.isFinite(y) ? Math.round(y) : null, margin: Number.isFinite(margin) ? Math.round(margin) : null };
+        saveAvatarPin(pin);
+        ui({ kind: 'avatar_pin', ...pin });
+        const where = pin.corner ? pin.corner.replace('-', ' ') : `${pin.x ?? 'the middle'}, ${pin.y ?? 'the middle'}`;
+        return `Pinned the Roamie to ${where}. It stays there until you move or release it.`;
+      },
+    },
     // The hands helper's tools: on macOS always (they explain what's missing), elsewhere when the helper is there.
-    ...(process.platform === 'darwin' || HANDS || ATSPI ? [
+    ...(HANDS_OK || ATSPI ? [
       {
-        name: 'list_windows', description: 'List the open app windows (app, title, id), front to back.',
+        name: 'list_windows', description: 'List every open app window grouped by workspace, with the current workspace, fullscreen and floating state, and the frontmost app.',
         parameters: z.object({}),
         execute: async () => {
           const res = await hands('windows');
-          return res.windows.map((w) => `window:${w.id}  ${w.app}${w.title ? ` — ${w.title}` : ''}${w.frontApp ? '  (frontmost app)' : ''}`).join('\n') || 'No windows open.';
+          if (!HANDS) return res.windows.map((w) => `window:${w.id}  ${w.app}${w.title ? ` — ${w.title}` : ''}${w.frontApp ? '  (frontmost app)' : ''}`).join('\n') || 'No windows open.';
+          return formatWindows(res);
         },
       },
+      ...(process.platform === 'linux' && HANDS ? [{
+        name: 'window_control',
+        description: "See and arrange the desktop the way the user would, no hyprctl needed (run_command refuses it): list every window grouped by workspace, focus a window or a direction, switch workspace, move a window to another workspace or a special one, open an app, close, float, pin, centre, resize, swap, pseudo-tile or fullscreen a window, bring it to the top, cycle windows, focus a monitor, move this workspace to a monitor, or read monitors, workspaces and Hyprland options (and set one with option + value). window: an id from list_windows or an app name. workspace: '1', '2', 'special:name'. name: a special workspace's name. monitor: e.g. 'eDP-1'. drag: from and to [x,y] in screen points. click/scroll: x, y. For a real held drag in a game or Electron app, use pointer_drag. option: key like 'general:gaps_in'.",
+        parameters: z.object({
+          action: z.enum(['list', 'focus', 'workspace', 'move', 'open', 'close', 'fullscreen', 'drag', 'click', 'scroll', 'float', 'pin', 'center', 'resize', 'swap', 'pseudo', 'bring_to_top', 'special', 'move_to_special', 'focus_direction', 'focus_monitor', 'workspace_to_monitor', 'last', 'urgent', 'cycle', 'monitors', 'workspaces', 'option', 'rename_workspace', 'swap_monitors', 'group_toggle', 'group_next', 'group_prev', 'dpms']),
+          window: z.string().optional(), workspace: z.string().optional(), app: z.string().optional(),
+          from: z.array(z.number()).length(2).optional(), to: z.array(z.number()).length(2).optional(), x: z.number().optional(), y: z.number().optional(),
+          button: z.number().int().optional(), amount: z.number().int().optional(), direction: z.enum(['up', 'down', 'left', 'right']).optional(),
+          width: z.number().int().optional(), height: z.number().int().optional(), relative: z.boolean().optional(), mode: z.string().optional(),
+          name: z.string().optional(), monitor: z.string().optional(), key: z.string().optional(), value: z.string().optional(), target: z.string().optional(),
+        }),
+        execute: async (args) => {
+          if (!allowActions()) throw new Error(actionsOff);
+          if (args.action === 'open') {
+            // The helper passes this straight to xdg-open, so it gets the open tool's check (system files, executables).
+            const t = String(args.app ?? args.target ?? '');
+            const isFile = /^[~/.]/.test(t) && await fs.stat(expand(t)).then((s) => s.isFile() && (s.mode & 0o111) !== 0, () => false);
+            allowed(checkOpen(t, HOME, { executable: isFile }));
+          }
+          const res = await hands('wm', JSON.stringify(args));
+          if (res.ok === false) throw new Error(res.error || 'That did not work.');
+          return args.action === 'list' ? formatWindows(res) : res.text || res.done || 'Done.';
+        },
+      }, {
+        name: 'pointer_drag',
+        description: 'A real button-held drag through a uinput virtual mouse: press at from, move in small interpolated steps, release at to. Use for games and Electron apps (shapez belts, camera pan) where a click plus separate moves does not hold the button. button: 1 left (default), 2 right, 3 middle. from and to are screen points. Existing click and click_at are unchanged.',
+        parameters: z.object({
+          from: z.array(z.number()).length(2), to: z.array(z.number()).length(2),
+          button: z.number().int().min(1).max(3).optional(), steps: z.number().int().min(2).max(200).optional(), delay_ms: z.number().min(1).max(100).optional(),
+        }),
+        execute: async ({ from, to, button = 1, steps = 24, delay_ms = 12 }) => {
+          if (!allowActions()) throw new Error(actionsOff);
+          const res = await hands('pointer', JSON.stringify({ action: 'drag', from, to, button, steps, delay: delay_ms / 1000 }));
+          if (res.ok === false) throw new Error(res.error || 'The drag did not work.');
+          return res.done;
+        },
+      }] : []),
       {
         name: 'read_window',
         description: (!HANDS && ATSPI ? 'Use this first whenever you are asked what is in an app, browser tab or window (to read what is there, not niri msg or other shell commands). ' : '') + "List an app window's controls (id, role, label, value) and all its text, including what's scrolled out of view, so you can read a whole page without scrolling or a screenshot. Needed for act_in_app ids; not for marking or clicking by visible words (draw or click_text do that). target: 'front', an app name, or 'browser'.",
@@ -889,10 +985,11 @@ export function createTools({ allowActions, ui, ask, openUrl, onCommitments, foc
           steps: z.preprocess((v) => { const x = unjson(v); return x && typeof x === 'object' && !Array.isArray(x) ? [x] : x; }, z.array(z.object({
             // read_window and take_screenshot aren't steps (the result already shows the window), but models put them
             // in anyway; they're dropped instead of failing the whole call.
-            do: z.enum(['click_text', 'fill', 'choose', 'scroll', 'set', 'focus', 'click', 'type', 'key', 'click_at', 'hover', 'wait', 'read_window', 'take_screenshot', 'screenshot']),
+            do: z.enum(['click_text', 'fill', 'choose', 'scroll', 'set', 'focus', 'click', 'type', 'key', 'click_at', 'hover', 'wait', 'tab', 'workspace', 'open_tab', 'close_tab', 'move_tab', 'workspace_create', 'workspace_rename', 'read_window', 'take_screenshot', 'screenshot']),
             id: z.number().int().optional(), field: z.string().optional(), text: z.string().optional(), option: z.string().optional(), near: z.string().optional(),
             key: z.string().optional(), direction: z.enum(['down', 'up', 'left', 'right']).optional(), amount: z.number().int().optional(), to_end: z.boolean().optional(),
             x: z.number().optional(), y: z.number().optional(), seconds: z.number().optional(),
+            workspace: z.string().optional(), index: z.number().int().optional(), url: z.string().optional(), to: z.string().optional(), name: z.string().optional(), current: z.string().optional(),
           })).min(1).max(40)),
         }),
         executionMode: 'sequential',
@@ -918,9 +1015,24 @@ export function createTools({ allowActions, ui, ask, openUrl, onCommitments, foc
           const upTo = firstClick < 0 ? steps.length : firstClick + 1;
           const spec = t === 'front' || t.startsWith('window:') ? t : `app:${t}`;
           const live = steps.slice(0, upTo).some((s) => s.id != null) ? await liveControls(spec) : null;
+          // A point from an old screenshot can be in the wrong window: take a fresh one when it may not match.
+          const wantsPoint = steps.some((s) => (s.do === 'click_at' || s.do === 'hover') && s.x != null && s.y != null);
+          if (wantsPoint) {
+            let targetWin = null;
+            if (t.startsWith('window:')) targetWin = t.slice(7);
+            else {
+              const loc = await hands('locate', t === 'front' ? 'front' : spec).catch(() => null);
+              targetWin = loc?.window?.id ?? null;
+            }
+            const wrong = lastShot && targetWin && lastShot.win != null && String(lastShot.win) !== String(targetWin);
+            if (wrong || lastShot?.used || !lastShot || lastShot.unmapped || lastShot.turn !== turn) {
+              const file = path.join(os.tmpdir(), `sidekick-${Date.now()}.jpg`);
+              await handsShot(file, t).catch(() => null);
+            }
+          }
           const mapped = [];
           for (const [i, s] of steps.entries()) {
-            if ((s.do === 'click_at' || s.do === 'hover') && s.x != null && s.y != null) { const [x, y] = await shotPoint(s.x, s.y); mapped.push({ ...s, x, y, global: true }); }
+            if ((s.do === 'click_at' || s.do === 'hover') && s.x != null && s.y != null) { const [x, y] = await shotPoint(s.x, s.y); mapped.push({ ...s, x, y, global: true, rel: [s.x, s.y] }); }
             else if (live && i < upTo && s.id != null) { const c = live(s.id); mapped.push({ ...s, id: c.id, label: c.label }); }
             else mapped.push(s);
           }
@@ -966,9 +1078,14 @@ export function createTools({ allowActions, ui, ask, openUrl, onCommitments, foc
           }
           return finish(res);
           function finish(res) {
-            if (!res.controls) return `In ${res.window.app}: ${res.done.join(', ')}.`;
-            lastRead = { win: res.window.id, app: res.window.app, controls: res.controls, turn };
-            return `In ${res.window.app}: ${res.done.join(', ')}.\nNow showing: ${res.window.title || res.window.app}\n${controlList(res.controls, res.texts)}`;
+            // A helper without accessibility reports no controls: still say what happened, and never assume a window.
+            const win = res.window ?? lastRead ?? { id: null, app: asked, title: '' };
+            const appName = win.app ?? asked;
+            const done = Array.isArray(res.done) ? res.done : [];
+            const controls = Array.isArray(res.controls) ? res.controls : [];
+            if (!controls.length) return `In ${appName}: ${done.join(', ') || 'done'}.`;
+            lastRead = { win: win.id, app: appName, controls, turn };
+            return `In ${appName}: ${done.join(', ') || 'done'}.\nNow showing: ${win.title || appName}\n${controlList(controls, res.texts)}`;
           }
         },
       },
@@ -1288,7 +1405,7 @@ A drawing stays until it's cleared, the window changes or the next one replaces 
   }
   // The front window's bounds ([x, y, w, h], screen points) for game mode, or null (no helper, no permission, too slow).
   async function frontBounds() {
-    if (!HANDS) return null;
+    if (!CAN_RUN) return null;
     const r = await Promise.race([hands('locate', 'front').catch(() => null), new Promise((res) => setTimeout(() => res(null), 1500))]);
     const b = r?.window?.bounds;
     return Array.isArray(b) && b.length === 4 && b.every(Number.isFinite) ? b : null;

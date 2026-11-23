@@ -3046,12 +3046,13 @@ dependencies = [
 
 [[package]]
 name = "roamies"
-version = "0.1.50"
+version = "0.1.51"
 dependencies = [
  "base64 0.22.1",
  "global-hotkey",
  "gtk",
  "gtk-layer-shell",
+ "javascriptcore-rs",
  "objc2",
  "objc2-service-management",
  "serde_json",
@@ -3059,6 +3060,7 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-single-instance",
  "tauri-plugin-updater",
+ "webkit2gtk",
  "x11rb 0.14.0",
  "zbus",
 ]

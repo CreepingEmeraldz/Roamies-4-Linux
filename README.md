@@ -44,7 +44,7 @@ voice, keeps track of what you said you'd do and nudges you when it's due.
 - **It talks back.** Spoken replies in its own voice, with real feeling, through [Fish Audio](https://fish.audio), or in a Gemini voice you pick, with your own [Google AI Studio](https://aistudio.google.com/apikey) key (the one you already use for a Gemini model works).
 - **It remembers.** What you said you'd do, reminders down to the second (or on repeat: "every weekday at 9", "every 2 hours"), and what matters to you.
 - **It draws on your screen.** Rings the exact button to click, walks you through each step, and sketches answers beside what you're reading.
-- **It does the clicking.** Opens apps, sites and files, and on macOS and Windows clicks or types in other apps for you.
+- **It does the clicking.** Opens apps, sites and files, and clicks or types in other apps for you (on Linux this needs the hands helper, which is Hyprland only for now).
 - **Your subscriptions.** Sign in with Claude or ChatGPT, or use an API key (Gemini, Grok, Kimi Code and more).
 
 | Pick your Roamie | What you get                                            |
@@ -102,7 +102,7 @@ quizzes you answer with a click.
 | Circle while talking   | Yes                        | Yes                         | No                                 |
 | Spoken replies         | Fish Audio or Gemini key   | Fish Audio or Gemini key    | Fish Audio or Gemini key           |
 | Memory and reminders   | Yes                        | Yes                         | Yes                                |
-| Read windows and point | Yes                        | Yes                         | Points from screenshots only       |
+| Read windows and point | Yes                        | Yes                         | Yes, with the helper (Hyprland)    |
 | Cards and diagrams     | Yes                        | Yes                         | Yes                                |
 | Click and type in apps | Yes                        | Yes                         | No                                 |
 | Ask about an area      | Yes (⌃⌥A)                  | Yes (Ctrl+Shift+A)          | Yes, with a key you bind (this fork) |
@@ -218,6 +218,9 @@ far less than on macOS and Windows. Bug reports with your distro, desktop and se
 **What works:** the Roamie on screen, the panel, typed and spoken questions (speech runs on your computer), spoken
 replies, memory and reminders, whole-screen screenshots and pointing at things on them, cards and diagrams, files and
 commands, Open at Login, and in-app updates for the AppImage (a `.deb` or `.rpm` copy opens the download page instead).
+With the bundled hands helper on Hyprland, it also reads windows, clicks and types in other apps, and asks about an area.
+The helper needs Hyprland, AT-SPI, `ydotool`, `wtype`, `wl-clipboard`, ImageMagick, `grim` and `slurp`;
+[`src-tauri/hands-linux/README.md`](showcase/tauri/src-tauri/hands-linux/README.md) lists them.
 
 **In this fork:** a layer-shell overlay on niri, sway, Hyprland and river, Ask About an Area (bind `roamies-ctl --snap`), quicker
 shortcuts through `~/.local/bin/roamies-ctl` and lower idle battery use. **[docs/LINUX.md](docs/LINUX.md)** has the details, the

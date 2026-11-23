@@ -31,6 +31,8 @@ cases('command', cmd, [
   ['find ~/Downloads -name "*.tmp" -delete', ASK], ['eval "$X"', ASK], ['some-unknown-tool --flag', ASK], ['sleep 100 &', ASK],
   ["osascript -e 'tell application \"Finder\" to empty trash'", ASK], ['echo "unterminated', ASK], ['cp a b', ASK],
   // Never.
+  ['hyprctl workspaces', BLOCK], ['/usr/bin/hyprctl dispatch x', BLOCK], ['env hyprctl clients', BLOCK], ['echo $(hyprctl clients)', BLOCK],
+  ['"hyprctl" dispatch x', BLOCK], ["'/usr/local/bin/hyprctl' keyword bind = ,Q,exec,firefox", BLOCK], ['~/bin/hyprctl clients', BLOCK], ['nice hyprctl clients', BLOCK],
   ['sudo rm -rf /', BLOCK], ['sudo ls', BLOCK], ['rm -rf ~', BLOCK], ['rm -rf ~/', BLOCK], ['rm -rf /', BLOCK], ['rm -rf $HOME', BLOCK],
   ['rm -rf ~/Documents', BLOCK], ['rm -rf *', BLOCK], ['rm -rf ./*', BLOCK], ['rm -fr ~/Desktop', BLOCK], ['cd ~ && rm -rf *', BLOCK],
   ['rm -rf /Applications', BLOCK], ['rm -rf ..', BLOCK], ['ls; sudo reboot', BLOCK], ['true && shutdown -h now', BLOCK],

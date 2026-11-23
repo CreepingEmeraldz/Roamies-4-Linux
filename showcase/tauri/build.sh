@@ -10,6 +10,7 @@ cp -R ../roamies ../onboarding ../panel dist/
 ../tauri/sidecar/bundle.sh
 # Ship a Node.js runtime with the app, for the target being built (--target <triple>, else this machine).
 TARGET=""; prev=""; for a in "$@"; do [ "$prev" = "--target" ] && TARGET="$a"; prev="$a"; done
+MODE="${1:-}"; [ $# -gt 0 ] && shift
 ../tauri/sidecar/fetch-node.sh ${TARGET:+"$TARGET"}
 # Windows helpers: voice (Parakeet speech on the PC) and hands (windows, capture, UI Automation, OCR); macOS
 # builds its Swift twins in build.rs. Linux has the voice helper (the same Rust one as Windows) and the pointer helper for niri.
@@ -38,7 +39,15 @@ case "$TRIPLE" in
     cp "src-tauri/pointer-linux/target/$TRIPLE/release/roamies-pointer" "src-tauri/binaries/roamies-pointer-$TRIPLE"
     # The accessibility helper (atspi-linux): lists windows and reads their controls and text, read only.
     cargo build --release --locked --manifest-path src-tauri/atspi-linux/Cargo.toml --target "$TRIPLE"
-    cp "src-tauri/atspi-linux/target/$TRIPLE/release/roamies-atspi" "src-tauri/binaries/roamies-atspi-$TRIPLE" ;;
+    cp "src-tauri/atspi-linux/target/$TRIPLE/release/roamies-atspi" "src-tauri/binaries/roamies-atspi-$TRIPLE"
+    # The hands helper is a Python script (hands-linux/README.md says what it needs). Tauri bundles it as an
+    # external binary, and in dev it goes beside the debug app, which is where the app looks for it.
+    install -m 755 src-tauri/hands-linux/roamies-hands "src-tauri/binaries/roamies-hands-$TRIPLE"
+    if [ "$MODE" = dev ]; then
+      DEV="src-tauri/target/debug"; [ -n "$TARGET" ] && DEV="src-tauri/target/$TARGET/debug"
+      mkdir -p "$DEV"
+      install -m 755 src-tauri/hands-linux/roamies-hands "$DEV/roamies-hands"
+    fi ;;
 esac
 cd src-tauri
 # macOS signing: APPLE_SIGNING_IDENTITY if set, else the first Developer ID Application certificate in
@@ -47,6 +56,16 @@ if [ "$(uname)" = "Darwin" ] && [ -z "${APPLE_SIGNING_IDENTITY:-}" ]; then
   APPLE_SIGNING_IDENTITY="$(security find-identity -v -p codesigning 2>/dev/null | sed -n 's/.*"\(Developer ID Application: [^"]*\)".*/\1/p' | head -1)"
   export APPLE_SIGNING_IDENTITY="${APPLE_SIGNING_IDENTITY:--}"
 fi
+# Linux: build the GTK layer-shell overlay host. It's one of this package's binaries (src/bin), so Cargo leaves it
+# beside the app binary, which is where the app looks for it, and Tauri bundles it with the app (not as an external
+# binary too: rpm refuses the same file twice).
+case "$TRIPLE" in
+  *-linux-*)
+    if [ "$MODE" = dev ]; then
+      cargo build --locked ${TARGET:+--target "$TARGET"} --bin roamies-overlay
+    else
+      cargo build --release --locked ${TARGET:+--target "$TARGET"} --bin roamies-overlay
+    fi ;;
+esac
 # ./build.sh release --target <triple> builds for one target (used by the release workflow).
-MODE="${1:-}"; [ $# -gt 0 ] && shift
 if [ "$MODE" = "dev" ]; then cargo build; else cargo tauri build ${TAURI_BUNDLES:+--bundles $TAURI_BUNDLES} "$@"; fi

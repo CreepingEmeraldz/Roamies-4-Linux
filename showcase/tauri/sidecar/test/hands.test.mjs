@@ -86,7 +86,7 @@ assert.equal(calls().find((c) => c[0] === 'capture').length, 4, 'no preview thum
   await tool('take_screenshot').execute({ target: 'TextEdit' }, ctx);
   fs.writeFileSync(log, '');
   await tool('act_in_app').execute({ target: 'TextEdit', steps: [{ do: 'hover', x: 400, y: 300 }] }, ctx);
-  assert.deepEqual(JSON.parse(calls().find((c) => c[0] === 'act')[1]).steps[0], { do: 'hover', x: 400, y: 300, global: true });
+  assert.deepEqual(JSON.parse(calls().find((c) => c[0] === 'act')[1]).steps[0], { do: 'hover', x: 400, y: 300, global: true, rel: [400, 300] });
 }
 
 // An app that isn't installed: one clear answer instead of "No matching window".
