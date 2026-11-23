@@ -876,7 +876,7 @@ export function createTools({ allowActions, ui, ask, openUrl, onCommitments, foc
       },
       {
         name: 'read_window',
-        description: (!HANDS && ATSPI ? 'Use this first whenever you are asked what is in an app, browser tab or window (never niri msg or other shell commands). ' : '') + "List an app window's controls (id, role, label, value) and all its text, including what's scrolled out of view, so you can read a whole page without scrolling or a screenshot. Needed for act_in_app ids; not for marking or clicking by visible words (draw or click_text do that). target: 'front', an app name, or 'browser'.",
+        description: (!HANDS && ATSPI ? 'Use this first whenever you are asked what is in an app, browser tab or window (to read what is there, not niri msg or other shell commands). ' : '') + "List an app window's controls (id, role, label, value) and all its text, including what's scrolled out of view, so you can read a whole page without scrolling or a screenshot. Needed for act_in_app ids; not for marking or clicking by visible words (draw or click_text do that). target: 'front', an app name, or 'browser'.",
         parameters: z.object({ target: z.string().optional() }),
         execute: async ({ target = 'front' }) => readWindow(target),
       },
