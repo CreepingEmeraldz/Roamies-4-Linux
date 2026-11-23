@@ -1,4 +1,1 @@
-- **Commands: Test button.** Each saved command has a Test link that runs it the way Roamies would (blocked commands stay blocked, and your ask settings apply), and shows what happened.
-- **Instant commands (off by default).** Switch it on in Commands and a message that is exactly a command's name or phrase ("next window") runs straight away with no AI wait, good for voice. A sentence that merely contains the phrase is read normally. Each command can opt out.
-- **Quick confirmation.** Instant commands say "Ran: Next window ✓", or why they didn't.
-- A command that succeeds silently now says so, so the AI no longer thinks it failed.
+- The rate-limit countdown now actually counts down every second (it stayed frozen on the first number).

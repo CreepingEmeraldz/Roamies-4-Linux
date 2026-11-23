@@ -222,7 +222,7 @@
   const openWait = (m) => {
     const a = getAgent();
     if (!a) return;
-    if (wait?.id === m.id) { if (!wait.h.closed) wait.h.retext(m.text); return; }
+    if (wait?.id === m.id) { wait.h.retext(m.text); return; }
     wait?.h.close();
     const id = m.id;
     const h = a.prompt({ placeholder: m.text, choices: [m.button || 'Cancel'], onChoose: () => { wait = null; h.close(); send({ type: 'answer', id, text: 'cancel' }); } });
