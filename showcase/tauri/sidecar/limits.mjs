@@ -46,6 +46,8 @@ export function resetAt(err, text, now = Date.now()) {
   if (m) return now + Number(m[1]) * UNIT(m[2]);
   m = /(?:please )?retry in (\d+(?:\.\d+)?)\s*(ms|milliseconds?|s|secs?|seconds?|m|mins?|minutes?|h|hrs?|hours?)\b/i.exec(text); // Gemini: "Please retry in 37.5s."
   if (m) return now + Number(m[1]) * UNIT(m[2]);
+  m = /retryDelay\W{1,4}(\d+(?:\.\d+)?)\s*s\b/i.exec(text); // Gemini's details: "retryDelay": "43s"
+  if (m) return now + Number(m[1]) * 1000;
   m = /retry[- ]after[:=\s]+(\d+)/i.exec(text);
   if (m) return now + Number(m[1]) * 1000;
   m = /resets?\s+in\s+(\d+(?:\.\d+)?)\s*(h|hrs?|hours?|m|mins?|minutes?)\b/i.exec(text);
@@ -83,14 +85,16 @@ export function limitFrom(err, now = Date.now()) {
  * anything else (a daily or monthly quota, an empty account, an error that isn't a limit). The platform's own "retry in
  * 37 s" is used when it gives one (plus a little), else a minute; over three minutes isn't worth waiting for.
  */
-export function rateWait(err, now = Date.now()) {
+export function rateWait(err, now = Date.now(), tries = 0) {
   const text = textOf(err);
   if (!text || !/rate.?limit|too many requests|\b429\b|resource.?exhausted|quota|tokens? per minute|requests? per minute/i.test(text)) return null;
   if (/per ?day|daily|per ?month|monthly|weekly|insufficient[_ ]quota|credit balance|out of credits?|billing details.*(?:day|month)/i.test(text)) return null;
   const at = resetAt(err, text, now);
   if (at == null) return /per ?minute|rate.?limit|too many requests|\b429\b/i.test(text) ? MIN : null;
   const ms = at - now;
-  return ms > 3 * MIN ? null : Math.max(10_000, ms) + 2000;
+  // The first try goes by what the platform says. If that wait wasn't enough (a per-minute token limit counts the last
+  // minute, so the room it names can be gone again), the next waits are at least most of a minute.
+  return ms > 3 * MIN ? null : Math.max(tries > 0 ? 45_000 : 10_000, ms) + 2000;
 }
 
 /** Why, in a few words, for telling the user (and the model taking over). */

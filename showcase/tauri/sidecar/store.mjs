@@ -130,6 +130,9 @@ const approxChars = (m) => (m.role === 'tool' ? m.content.reduce((n, r) => n + t
 
 // Window reads from earlier requests are out of date and large; they shrink to their first line.
 const READ_TOOLS = new Set(['read_window']);
+// What act_in_app returns ends with the window's whole control list too, so a few steps in a row carry it a few times.
+const WINDOW_TOOLS = new Set(['read_window', 'act_in_app']);
+const SUPERSEDED = '[The list of controls that was shown here was trimmed to save space: a newer view of the window came after it, and that one is current.]';
 const OLD_READ = "[The full list of this window's controls was shown for an earlier request and has been trimmed since to save space; your answer then was based on all of it. The screen has likely changed: read it again if you need it now.]";
 const textOfResult = (c) => (typeof c === 'string' ? c : Array.isArray(c) ? c.map((p) => p?.text ?? '').join('') : '');
 
@@ -153,8 +156,15 @@ export function fitContext(messages, { budgetTokens, force = false }) {
   if (current >= 0 && hasImage(messages[current])) keepImg.add(current);
   const names = new Map();
   for (const m of messages) if (m.role === 'assistant' && Array.isArray(m.content)) for (const p of m.content) if (p?.type === 'tool_call') names.set(p.id, p.name);
+  // Within a request, only the newest view of a window is worth sending again: each step's result carries the whole
+  // control list, and every later model call re-sends all of them (the per-minute token limits count each one).
+  let lastView = -1;
+  messages.forEach((m, i) => { if (m.role === 'tool' && m.content.some((r) => WINDOW_TOOLS.has(names.get(r.toolCallId)))) lastView = i; });
   let out = messages.map((m, i) => {
     const old = i < current;
+    if (m.role === 'tool' && !old && i < lastView && m.content.some((r) => WINDOW_TOOLS.has(names.get(r.toolCallId)) && textOfResult(r.content).length > 700)) {
+      m = { ...m, content: m.content.map((r) => (WINDOW_TOOLS.has(names.get(r.toolCallId)) && textOfResult(r.content).length > 700 ? { ...r, content: `${textOfResult(r.content).split('\n').slice(0, 2).join('\n')}\n${SUPERSEDED}` } : r)) };
+    }
     if (m.role === 'tool' && old && m.content.some((r) => READ_TOOLS.has(names.get(r.toolCallId)))) {
       m = { ...m, content: m.content.map((r) => (READ_TOOLS.has(names.get(r.toolCallId)) ? { ...r, content: `${textOfResult(r.content).split('\n')[0]}\n${OLD_READ}` } : r)) };
     }

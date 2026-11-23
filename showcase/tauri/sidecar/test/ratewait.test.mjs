@@ -21,3 +21,15 @@ assert.equal(rateWait(new Error('That key is invalid'), T), null);
 assert.equal(rateWait(new Error('fetch failed'), T), null);
 assert.equal(rateWait(null, T), null);
 console.log('ratewait ok');
+
+// Gemini's structured hint, and longer waits when the first wasn't enough.
+{
+  const now = 1_000_000;
+  const body = new Error('{"error":{"code":429,"status":"RESOURCE_EXHAUSTED","details":[{"@type":"type.googleapis.com/google.rpc.RetryInfo","retryDelay":"43s"}]}}');
+  assert.equal(rateWait(body, now), 45_000, 'retryDelay: 43 s + 2');
+  const quick = new Error('429 rate limit: Please retry in 15s.');
+  assert.equal(rateWait(quick, now), 17_000);
+  assert.equal(rateWait(quick, now, 1), 47_000, 'after one wait that was not enough, most of a minute');
+  assert.equal(rateWait(body, now, 2), 47_000);
+  console.log('rate wait retries ok');
+}

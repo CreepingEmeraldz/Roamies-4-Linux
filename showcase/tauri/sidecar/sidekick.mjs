@@ -1675,7 +1675,7 @@ async function prompt(text, image = null, note = '', byVoice = false, news = nul
     }
     // No backup to take over: a limit that clears within minutes is waited out, a few times at most.
     if (!retryNext && !controller.signal.aborted && !stalled && config.provider !== 'local') {
-      const ms = rateWait(err), tries = rateRetryFor?.text === text ? rateRetryFor.tries : 0;
+      const tries = rateRetryFor?.text === text ? rateRetryFor.tries : 0, ms = rateWait(err, Date.now(), tries);
       if (ms && tries < RATE_TRIES) rateRetry = { text, image, note, byVoice, listenAfter, news, ms, tries, who: PROVIDER_LABELS[config.provider] ?? 'The AI' };
     }
     if (retryNext || rateRetry) ui({ kind: 'agent', e: { type: 'done' } });

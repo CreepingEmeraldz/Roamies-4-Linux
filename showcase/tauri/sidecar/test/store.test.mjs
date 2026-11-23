@@ -204,6 +204,17 @@ console.log('store tests: all passed');
   assert.equal(upToQ2(later), upToQ2(f), 'earlier messages are byte-identical between calls');
   const cur = S5.fitContext([{ role: 'system', content: 'sys' }, { role: 'user', content: 'q' }, ...read('r9')], { budgetTokens: 1e6 });
   assert.match(cur.at(-1).content[0].content, /link "Billing"/, 'a read from the current request stays whole');
+  // Within one request, only the newest window view is sent whole: each step's result carries the full control list.
+  const big = 'x'.repeat(900);
+  const act = (id) => [{ role: 'assistant', content: [{ type: 'tool_call', id, name: 'act_in_app', args: {} }] },
+    { role: 'tool', content: [{ type: 'tool_result', toolCallId: id, content: `In Brave: click.\nNow showing: Page ${id}\n${big}` }] }];
+  const steps = S5.fitContext([{ role: 'system', content: 'sys' }, { role: 'user', content: 'q' }, ...act('a1'), ...act('a2'), ...act('a3')], { budgetTokens: 1e6 });
+  const body = (id) => steps.find((m) => m.role === 'tool' && m.content[0].toolCallId === id).content[0].content;
+  assert.match(body('a1'), /^In Brave: click\.\nNow showing: Page a1\n\[The list of controls that was shown here was trimmed/, 'an earlier step keeps its first lines only');
+  assert.ok(!body('a1').includes(big) && !body('a2').includes(big));
+  assert.ok(body('a3').includes(big), 'the newest view stays whole');
+  const short = S5.fitContext([{ role: 'system', content: 'sys' }, { role: 'user', content: 'q' }, { role: 'assistant', content: [{ type: 'tool_call', id: 'e1', name: 'act_in_app', args: {} }] }, { role: 'tool', content: [{ type: 'tool_result', toolCallId: 'e1', content: 'Nothing here is labelled "Run".' }] }, ...act('a9')], { budgetTokens: 1e6 });
+  assert.match(JSON.stringify(short), /Nothing here is labelled/, 'short results (errors) are never trimmed');
   console.log('cache stability tests: passed');
 }
 
