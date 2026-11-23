@@ -1,1 +1,1 @@
-- Fixed clicking something that opens another page (e.g. a link or "View source"): after the click the result still said the old page was showing, so Roamies clicked again two or three times. It now waits for the page to change and reports the new page's title.
+- niri: "the front window" is now the one niri has focused. Before, with several windows of the same app (e.g. three Brave windows), Roamies could read the wrong one and describe a page you weren't on.

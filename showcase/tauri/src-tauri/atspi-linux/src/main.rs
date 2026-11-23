@@ -136,16 +136,31 @@ fn id_of(w: &El) -> String {
     format!("{}|{}", w.dest, w.path)
 }
 
+/// The title of the window the compositor has focused (niri only), which says which of an app's windows is in front:
+/// an app's own "active" flag over the accessibility bus can be stale or set on several windows.
+fn focused_title() -> Option<String> {
+    std::env::var_os("NIRI_SOCKET").filter(|v| !v.is_empty())?;
+    let out = std::process::Command::new("niri").args(["msg", "--json", "focused-window"]).output().ok()?;
+    let v: Value = serde_json::from_slice(&out.stdout).ok()?;
+    v["title"].as_str().filter(|t| !t.is_empty()).map(String::from)
+}
+
 fn pick<'a>(wins: &'a [Win], spec: &str) -> Option<&'a Win> {
+    let focus = focused_title();
+    let best = |hits: Vec<&'a Win>| -> Option<&'a Win> {
+        focus.as_deref().and_then(|f| hits.iter().find(|w| logic::same_title(&w.title, f)))
+            .or_else(|| hits.iter().find(|w| w.active))
+            .or(hits.first())
+            .copied()
+    };
     if spec == "front" || spec.is_empty() {
-        return wins.iter().find(|w| w.active).or(wins.first());
+        return best(wins.iter().collect());
     }
     if let Some(id) = spec.strip_prefix("window:") {
         return wins.iter().find(|w| id_of(&w.el) == id);
     }
     let want = spec.strip_prefix("app:").unwrap_or(spec).to_lowercase();
-    let hits: Vec<&Win> = wins.iter().filter(|w| w.app.to_lowercase().contains(&want) || w.title.to_lowercase().contains(&want)).collect();
-    hits.iter().find(|w| w.active).or(hits.first()).copied()
+    best(wins.iter().filter(|w| w.app.to_lowercase().contains(&want) || w.title.to_lowercase().contains(&want)).collect())
 }
 
 fn win_info(w: &Win, bus: &Bus) -> Value {
@@ -347,7 +362,8 @@ fn main() {
         Some("front") => {
             let bus = Bus::open().unwrap_or_else(|e| fail(&e));
             let wins = windows(&bus);
-            match wins.iter().find(|w| w.active) {
+            let focus = focused_title();
+            match focus.as_deref().and_then(|f| wins.iter().find(|w| logic::same_title(&w.title, f))).or_else(|| wins.iter().find(|w| w.active)) {
                 Some(w) => out(json!({ "ok": true, "app": w.app, "title": w.title })),
                 None => out(json!({ "ok": true })),
             }
@@ -355,11 +371,14 @@ fn main() {
         Some("windows") => {
             let _ = enable();
             let bus = Bus::open().unwrap_or_else(|e| fail(&e));
-            let list: Vec<Value> = windows(&bus)
+            let wins = windows(&bus);
+            // The compositor's focused window when it names one of these, else the bus's own "active" flag.
+            let focus = focused_title().filter(|f| wins.iter().any(|w| logic::same_title(&w.title, f)));
+            let list: Vec<Value> = wins
                 .iter()
                 .map(|w| {
                     let mut v = json!({ "id": id_of(&w.el), "app": w.app, "title": w.title });
-                    if w.active {
+                    if focus.as_deref().map_or(w.active, |f| logic::same_title(&w.title, f)) {
                         v["frontApp"] = json!(true);
                     }
                     v

@@ -121,9 +121,23 @@ pub fn offscreen_text(found: Vec<(f64, String)>, cap: usize) -> Vec<String> {
     head
 }
 
+/// Whether an accessibility window name and the compositor's title are the same window (one may be cut short).
+pub fn same_title(a: &str, b: &str) -> bool {
+    let (a, b) = (a.trim(), b.trim());
+    !a.is_empty() && !b.is_empty() && (a == b || a.starts_with(b) || b.starts_with(a))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn titles() {
+        assert!(same_title("Roamies Linux - Claude - Brave – Test", "Roamies Linux - Claude - Brave – Test"));
+        assert!(same_title("Dashboard - Brave – Test", "Dashboard - Brave"));
+        assert!(!same_title("Dashboard - Brave", "Roamies Linux - Claude - Brave"));
+        assert!(!same_title("", "x") && !same_title("x", ""));
+    }
 
     #[test]
     fn roles() {
