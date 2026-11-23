@@ -3,3 +3,4 @@
 - A reply that arrives as an escaped string (showing `\n\n` and `\``) is now shown as the paragraphs it was meant to be.
 - Fewer tokens per step (helps per-minute limits like Gemini's): during one request, only the newest view of a window is sent again; the long control lists from earlier steps are trimmed to their first lines.
 - Rate-limit waits: Gemini's own `retryDelay` hint is now read, and if the first wait wasn't enough, the next ones are at least about 45 seconds instead of retrying too early.
+- Gemini: the conversation is folded into a summary at about 37k tokens instead of 90k, so each call of a task re-sends less (the free tier's per-minute token limit counts every call).

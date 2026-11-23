@@ -922,7 +922,10 @@ const resumed = loadLatestSession().then((s) => { if (s && !session) session = s
 const BUDGET_CAP = 120_000;
 // Tokens per request: kept tight for a quick reply out loud. The ChatGPT plan has its own windows (accountId).
 let credsAccountId;
-const requestBudget = () => Math.min(config.lite ? LITE_BUDGET : BUDGET_CAP, getContextWindow(config.model, { provider: config.provider, ...(agentRoute === 'api' && credsAccountId ? { accountId: credsAccountId } : {}) }) * 0.5);
+// Platforms with a tight per-minute token limit (Gemini's free tier is about 250k a minute, and every call of a task
+// re-sends the whole conversation): a smaller budget folds older turns into a summary sooner.
+const TIGHT_BUDGET = { gemini: 50_000 };
+const requestBudget = () => Math.min(config.lite ? LITE_BUDGET : BUDGET_CAP, TIGHT_BUDGET[config.provider] ?? Infinity, getContextWindow(config.model, { provider: config.provider, ...(agentRoute === 'api' && credsAccountId ? { accountId: credsAccountId } : {}) }) * 0.5);
 // Claude Code's session for this conversation, so a rebuilt agent continues it instead of starting over.
 let ccResume = null;
 const claudeCode = claudeCodeInstaller({
