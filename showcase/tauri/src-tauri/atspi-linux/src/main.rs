@@ -48,7 +48,10 @@ impl Bus {
         Ok(Bus { c })
     }
     fn proxy(&self, el: &El, iface: &'static str) -> Option<Proxy<'_>> {
-        Proxy::new(&self.c, el.dest.clone(), el.path.clone(), iface).ok()
+        // No property cache: by default every new proxy subscribes to changes and reads all of an interface's properties
+        // first, several round trips per node when each node is only asked once.
+        zbus::blocking::proxy::Builder::new(&self.c).destination(el.dest.clone()).ok()?.path(el.path.clone()).ok()?.interface(iface).ok()?
+            .cache_properties(zbus::proxy::CacheProperties::No).build().ok()
     }
     fn children(&self, el: &El) -> Vec<El> {
         let Some(p) = self.proxy(el, ACC) else { return vec![] };
@@ -190,8 +193,6 @@ fn walk(bus: &Bus, el: &El, depth: usize, r: &mut Read) {
         }
         // A "text" role you can't edit is words on the page (a paragraph in a document), not a field.
         let kind = if role == "text" && !logic::has(state, logic::EDITABLE) { logic::Kind::Text } else { kind };
-        let ext = bus.extents(el);
-        let (y, x) = ext.map(|e| (e[1] as f64, e[0] as f64)).unwrap_or((0.0, 0.0));
         match kind {
             logic::Kind::Control(word) => {
                 let editable = logic::has(state, logic::EDITABLE);
@@ -243,6 +244,8 @@ fn walk(bus: &Bus, el: &El, depth: usize, r: &mut Read) {
                 }
                 let t = logic::clean(&t, 600);
                 if !t.is_empty() && r.seen.insert(t.clone()) {
+                    // Where it sits, only for the words that are kept (it is a round trip of its own).
+                    let (y, x) = bus.extents(el).map(|e| (e[1] as f64, e[0] as f64)).unwrap_or((0.0, 0.0));
                     if showing {
                         r.on.push((y, x, t));
                     } else {
@@ -256,9 +259,80 @@ fn walk(bus: &Bus, el: &El, depth: usize, r: &mut Read) {
     if stop {
         return;
     }
-    for k in bus.children(el) {
-        walk(bus, &k, depth + 1, r);
+    walk_kids(bus, bus.children(el), depth + 1, r);
+}
+
+/// Each round trip to the bus waits on the app, so the children of a node are read side by side (up to PAR threads at a
+/// time) and joined back in order: the result is the one a single walk would give, found sooner.
+const PAR: usize = 8;
+static ACTIVE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+fn fresh(started: Instant) -> Read {
+    Read { controls: vec![], els: vec![], on: vec![], off: vec![], seen: Default::default(), nodes: 0, started }
+}
+
+/// What a side walk found, added after what's there (ids renumbered, repeated text dropped, the same limits).
+fn absorb(r: &mut Read, c: Read) {
+    r.nodes += c.nodes;
+    for (mut ctl, el) in c.controls.into_iter().zip(c.els) {
+        if r.controls.len() >= MAX_CONTROLS {
+            break;
+        }
+        ctl["id"] = json!(r.controls.len() + 1);
+        r.controls.push(ctl);
+        r.els.push(el);
     }
+    for t in c.on {
+        if r.seen.insert(t.2.clone()) {
+            r.on.push(t);
+        }
+    }
+    for t in c.off {
+        if r.seen.insert(t.1.clone()) {
+            r.off.push(t);
+        }
+    }
+}
+
+fn walk_kids(bus: &Bus, kids: Vec<El>, depth: usize, r: &mut Read) {
+    use std::sync::atomic::Ordering::SeqCst;
+    if kids.len() < 2 || depth > 12 {
+        for k in &kids {
+            walk(bus, k, depth, r);
+        }
+        return;
+    }
+    let started = r.started;
+    std::thread::scope(|sc| {
+        let jobs: Vec<_> = kids
+            .iter()
+            .map(|k| {
+                if ACTIVE.fetch_add(1, SeqCst) < PAR {
+                    Some(sc.spawn(move || {
+                        let mut c = fresh(started);
+                        walk(bus, k, depth, &mut c);
+                        ACTIVE.fetch_sub(1, SeqCst);
+                        c
+                    }))
+                } else {
+                    ACTIVE.fetch_sub(1, SeqCst);
+                    None
+                }
+            })
+            .collect();
+        for (k, job) in kids.iter().zip(jobs) {
+            match job {
+                Some(j) => {
+                    if let Ok(c) = j.join() {
+                        if r.nodes < MAX_NODES && r.controls.len() < MAX_CONTROLS {
+                            absorb(r, c);
+                        }
+                    }
+                }
+                None => walk(bus, k, depth, r),
+            }
+        }
+    });
 }
 
 fn main() {

@@ -106,7 +106,8 @@ jobs:
           ls -la out
           PREV="$(gh release list -R "$GITHUB_REPOSITORY" --limit 1 --json tagName -q '.[0].tagName' || true)"
           { cat "$GITHUB_WORKSPACE/.github/release-notes.md"; echo; echo "**Full Changelog**: https://github.com/$GITHUB_REPOSITORY/compare/${PREV:-$TAG}...$TAG"; } > notes.md
-          gh release create "$TAG" -R "$GITHUB_REPOSITORY" --title "Roamies $LABEL" --latest \
+          # A draft until every file is up, so nobody (the updater included) sees a release that is half there.
+          gh release create "$TAG" -R "$GITHUB_REPOSITORY" --title "Roamies $LABEL" --draft \
             --notes-file notes.md --target "$GITHUB_SHA"
           gh release upload "$TAG" -R "$GITHUB_REPOSITORY" --clobber out/*
           # The feed the app's updater reads (the newest release's copy is at releases/latest/download/latest.json).
@@ -119,3 +120,4 @@ jobs:
               platforms: { "linux-x86_64": p, "linux-x86_64-appimage": p } }, null, 2));
           '
           gh release upload "$TAG" -R "$GITHUB_REPOSITORY" --clobber latest.json
+          gh release edit "$TAG" -R "$GITHUB_REPOSITORY" --draft=false --latest
