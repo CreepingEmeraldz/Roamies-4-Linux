@@ -1,3 +1,4 @@
 - Faster: a command that starts something in the background (e.g. launching an app) no longer makes Roamies wait a full minute before carrying on.
 - Faster: keys, typing and waits in other apps no longer re-read the whole page between steps, which took several seconds per step in a browser.
 - The rate-limit countdown now actually counts down every second (it stayed frozen on the first number).
+- Reading words off a screenshot runs at low priority so it doesn't slow down what you're doing at the time.

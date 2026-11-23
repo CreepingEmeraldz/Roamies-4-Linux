@@ -49,7 +49,8 @@ export function findWords(words, find) {
 /** The words tesseract reads in an image file. Rejects with `missing: true` when tesseract isn't installed. */
 export function readWords(file, { timeout = 30000 } = {}) {
   return new Promise((resolve, reject) => {
-    const p = spawn('tesseract', [file, 'stdout', '--psm', '11', '-l', 'eng', '-c', 'thresholding_method=1', 'tsv'], {
+    // Low priority (nice): it starts the moment a screenshot is taken, and must not slow what you're doing meanwhile.
+    const p = spawn('nice', ['-n', '10', 'tesseract', file, 'stdout', '--psm', '11', '-l', 'eng', '-c', 'thresholding_method=1', 'tsv'], {
       stdio: ['ignore', 'pipe', 'ignore'],
       // One thread: tesseract's own threads fight over the cores and, on a many-core laptop, take several times longer.
       env: { ...process.env, OMP_THREAD_LIMIT: '1' },
@@ -59,7 +60,7 @@ export function readWords(file, { timeout = 30000 } = {}) {
     const t = setTimeout(() => { p.kill('SIGKILL'); end(reject, new Error('Reading the screen took too long.')); }, timeout);
     p.stdout.on('data', (d) => { out += d; });
     p.on('error', (e) => end(reject, Object.assign(new Error(e.code === 'ENOENT' ? 'tesseract is not installed' : e.message), { missing: e.code === 'ENOENT' })));
-    p.on('close', (code) => (code === 0 ? end(resolve, parseTsv(out)) : end(reject, new Error(`tesseract stopped (${code})`))));
+    p.on('close', (code) => (code === 0 ? end(resolve, parseTsv(out)) : end(reject, Object.assign(new Error(code === 127 ? 'tesseract is not installed' : `tesseract stopped (${code})`), { missing: code === 127 }))));
   });
 }
 
