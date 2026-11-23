@@ -402,10 +402,27 @@ fn main() {
             let Some(w) = pick(&wins, &spec) else { fail("No matching window is open.") };
             match act::run(&bus, w, &plan["steps"]) {
                 Ok(done) => {
-                    std::thread::sleep(Duration::from_millis(500));
+                    // Let the page settle before it is read for the result: a click that opens another page changes the
+                    // window's title a moment later, and reading at once showed the old page (so it was clicked again).
+                    // The title is looked up again too: the one from before the steps was reported as "now showing".
+                    let was = w.title.clone();
+                    let (mut title, mut last) = (was.clone(), String::new());
+                    for i in 0..10 {
+                        std::thread::sleep(Duration::from_millis(250));
+                        let now = windows(&bus).into_iter().find(|x| id_of(&x.el) == id_of(&w.el)).map(|x| x.title).unwrap_or_else(|| title.clone());
+                        title = now.clone();
+                        if now != was {
+                            if now == last { break; }
+                            last = now;
+                        } else if i >= 1 {
+                            break;
+                        }
+                    }
                     let mut r = Read { controls: vec![], els: vec![], on: vec![], off: vec![], seen: Default::default(), nodes: 0, started: Instant::now() };
                     walk(&bus, &w.el, 0, &mut r);
-                    out(json!({ "ok": true, "done": done, "window": win_info(w, &bus), "controls": r.controls, "texts": logic::page_text(r.on, 3000) }))
+                    let mut info = win_info(w, &bus);
+                    info["title"] = json!(title);
+                    out(json!({ "ok": true, "done": done, "window": info, "controls": r.controls, "texts": logic::page_text(r.on, 3000) }))
                 }
                 Err(e) => fail(&e),
             }
