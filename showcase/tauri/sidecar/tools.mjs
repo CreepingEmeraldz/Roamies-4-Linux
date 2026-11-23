@@ -27,7 +27,20 @@ const clip = (s, n) => (s.length > n ? s.slice(0, n) + `\n…(${s.length - n} mo
 // shell: false always: arguments go to the program as they are, never through a shell.
 // onLine: called with each line of stderr as it arrives (the hands helper's live progress).
 export const run = (cmd, args, { onLine, ...opts } = {}) => new Promise((res) => {
-  const child = execFile(cmd, args, { maxBuffer: 8 << 20, timeout: 60_000, windowsHide: true, ...opts, shell: false }, (err, stdout, stderr) => res({ err, stdout: String(stdout), stderr: String(stderr) }));
+  let settled = false;
+  const finish = (v) => { if (!settled) { settled = true; res(v); } };
+  const child = execFile(cmd, args, { maxBuffer: 8 << 20, timeout: 60_000, windowsHide: true, ...opts, shell: false }, (err, stdout, stderr) => finish({ err, stdout: String(stdout), stderr: String(stderr) }));
+  // A command that starts something in the background (brave &, nohup x &) leaves that thing holding the output pipes
+  // open, and execFile only answers when they close: a minute later. The command itself is done when the shell exits,
+  // so answer then with what it printed (after a moment for the last of it to arrive).
+  let out = '', err2 = '';
+  child.stdout?.on('data', (d) => { if (out.length < 1 << 20) out += d; });
+  child.stderr?.on('data', (d) => { if (err2.length < 1 << 20) err2 += d; });
+  child.once('exit', (code, signal) => setTimeout(() => {
+    if (settled) return;
+    finish({ err: code === 0 && !signal ? null : Object.assign(new Error('exit'), { code, signal }), stdout: out, stderr: err2 });
+    child.stdout?.destroy(); child.stderr?.destroy();
+  }, 300).unref());
   if (!onLine || !child.stderr) return;
   let buf = '';
   child.stderr.on('data', (d) => {

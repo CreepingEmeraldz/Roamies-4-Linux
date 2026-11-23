@@ -157,7 +157,9 @@ pub fn run(bus: &Bus, w: &Win, steps: &Value) -> Result<Vec<String>, String> {
     if steps.iter().any(|st| matches!(s(st, "do"), "key" | "scroll")) && !have_wtype() {
         return Err("Pressing keys and scrolling in other apps need wtype (sudo apt install wtype); nothing was done. Press a button with click_text instead.".into());
     }
-    let mut r = read(bus, w);
+    // The page is read only when a step needs to find something on it, and again only after something changed it:
+    // reading a big page's tree takes seconds, and keys, typing and waits never look at it.
+    let mut cache: Option<Read> = None;
     let mut done = vec![];
     for (n, st) in steps.iter().enumerate() {
         let d = s(st, "do");
@@ -169,22 +171,28 @@ pub fn run(bus: &Bus, w: &Win, steps: &Value) -> Result<Vec<String>, String> {
             find(r, words, roles).ok_or_else(|| format!("Nothing here is labelled {:?}. Call read_window to see the exact words.", words))
         };
         let mut changed = false;
+        if !(d == "key" || d == "wait" || (d == "type" && have_wtype())) && cache.is_none() {
+            cache = Some(read(bus, w));
+        }
         match d {
             "click_text" | "click" => {
-                let i = pick(&r, &[])?;
+                let r = cache.as_ref().unwrap();
+                let i = pick(r, &[])?;
                 let (role, label) = (s(&r.controls[i], "role").to_string(), s(&r.controls[i], "label").to_string());
                 press(bus, &r.els[i], &role).map_err(|e| format!("couldn't click {label:?}: {e}"))?;
                 done.push(format!("click {label:?}"));
                 changed = true;
             }
             "fill" | "set" => {
-                let i = pick(&r, &["text field", "text area", "combo box"])?;
+                let r = cache.as_ref().unwrap();
+                let i = pick(r, &["text field", "text area", "combo box"])?;
                 let label = s(&r.controls[i], "label").to_string();
                 set_text(bus, &r.els[i], s(st, "text")).map_err(|e| format!("{label:?}: {e}"))?;
                 done.push(format!("fill {label:?}"));
             }
             "focus" => {
-                let i = pick(&r, &[])?;
+                let r = cache.as_ref().unwrap();
+                let i = pick(r, &[])?;
                 focus(bus, &r.els[i]).map_err(|e| e.to_string())?;
                 done.push(format!("focus {:?}", s(&r.controls[i], "label")));
             }
@@ -196,12 +204,13 @@ pub fn run(bus: &Bus, w: &Win, steps: &Value) -> Result<Vec<String>, String> {
                 changed = true;
             }
             "scroll" => {
+                let r = cache.as_ref().unwrap();
                 // Scrolling is Page Up/Down (or Home/End) in the window in front, so a text field with the cursor would take them.
                 if r.controls.iter().any(|c| c["focused"] == true && matches!(s(c, "role"), "text field" | "text area")) {
                     return Err("A text field has the cursor, so the keys would go into it. click_text something on the page first, then scroll.".into());
                 }
                 if st["id"].is_u64() || !s(st, "text").is_empty() {
-                    let i = pick(&r, &[])?;
+                    let i = pick(r, &[])?;
                     let _ = focus(bus, &r.els[i]);
                     std::thread::sleep(Duration::from_millis(120));
                 }
@@ -227,11 +236,13 @@ pub fn run(bus: &Bus, w: &Win, steps: &Value) -> Result<Vec<String>, String> {
                 done.push("type".into());
             }
             "type" => {
+                let r = cache.as_ref().unwrap();
                 let i = r.controls.iter().position(|c| c["focused"] == true && matches!(s(c, "role"), "text field" | "text area")).ok_or("No field has the cursor. fill a field by its label instead.")?;
                 insert_at_cursor(bus, &r.els[i], s(st, "text"))?;
                 done.push("type".into());
             }
             "choose" => {
+                let mut r = cache.take().unwrap();
                 if !s(st, "field").is_empty() {
                     let i = find(&r, s(st, "field"), &[]).ok_or_else(|| format!("Nothing here is labelled {:?}.", s(st, "field")))?;
                     let role = s(&r.controls[i], "role").to_string();
@@ -243,6 +254,7 @@ pub fn run(bus: &Bus, w: &Win, steps: &Value) -> Result<Vec<String>, String> {
                 let role = s(&r.controls[i], "role").to_string();
                 press(bus, &r.els[i], &role).map_err(|e| format!("couldn't choose {:?}: {e}", s(st, "option")))?;
                 done.push(format!("choose {:?}", s(st, "option")));
+                cache = Some(r);
                 changed = true;
             }
             "wait" => {
@@ -255,7 +267,7 @@ pub fn run(bus: &Bus, w: &Win, steps: &Value) -> Result<Vec<String>, String> {
         // The page moves after a click: read it again before the next step finds anything.
         if changed && n + 1 < steps.len() {
             std::thread::sleep(Duration::from_millis(500));
-            r = read(bus, w);
+            cache = None;
         }
     }
     Ok(done)
