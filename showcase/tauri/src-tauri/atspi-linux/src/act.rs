@@ -160,6 +160,9 @@ pub fn run(bus: &Bus, w: &Win, steps: &Value) -> Result<Vec<String>, String> {
     // The page is read only when a step needs to find something on it, and again only after something changed it:
     // reading a big page's tree takes seconds, and keys, typing and waits never look at it.
     let mut cache: Option<Read> = None;
+    let wt = have_wtype();
+    // Keys, typing and waits don't look at the page.
+    let blind = |st: &Value| { let d = s(st, "do"); d == "key" || d == "wait" || (d == "type" && wt) };
     let mut done = vec![];
     for (n, st) in steps.iter().enumerate() {
         let d = s(st, "do");
@@ -171,7 +174,7 @@ pub fn run(bus: &Bus, w: &Win, steps: &Value) -> Result<Vec<String>, String> {
             find(r, words, roles).ok_or_else(|| format!("Nothing here is labelled {:?}. Call read_window to see the exact words.", words))
         };
         let mut changed = false;
-        if !(d == "key" || d == "wait" || (d == "type" && have_wtype())) && cache.is_none() {
+        if !blind(st) && cache.is_none() {
             cache = Some(read(bus, w));
         }
         match d {
@@ -266,7 +269,9 @@ pub fn run(bus: &Bus, w: &Win, steps: &Value) -> Result<Vec<String>, String> {
         }
         // The page moves after a click: read it again before the next step finds anything.
         if changed && n + 1 < steps.len() {
-            std::thread::sleep(Duration::from_millis(500));
+            // After a click the page needs a moment; between keys and typing it needn't.
+            let quick = blind(st) && blind(&steps[n + 1]);
+            std::thread::sleep(Duration::from_millis(if quick { 120 } else { 500 }));
             cache = None;
         }
     }

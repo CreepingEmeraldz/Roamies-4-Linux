@@ -1,4 +1,1 @@
-- Faster page reading in other apps: reading a browser page takes roughly a third less time (the helper no longer does extra work per element, and reads parts of the page side by side).
-- Releases now appear only once every file is uploaded, so an update check never sees a half-published release.
-- Cleaned up what the AI is told on Linux: it no longer thinks it can't scroll or see your cursor, knows to take a screenshot before pointing at something by its words, and may run niri commands when you ask for them.
-- Asking with your keybind (`roamies --ask`) while Roamies is busy now interrupts and answers your new message right away, like the typing shortcut does elsewhere, instead of silently waiting in line.
+- Faster multi-step actions in other apps: a pause of half a second after every step is now only about a tenth of a second between keypresses, typing and waits (it stays half a second after a click, where the page needs a moment).
