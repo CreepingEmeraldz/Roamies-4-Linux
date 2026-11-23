@@ -1,1 +1,2 @@
 - niri: "the front window" is now the one niri has focused. Before, with several windows of the same app (e.g. three Brave windows), Roamies could read the wrong one and describe a page you weren't on.
+- Clicking by words: if the words aren't found on a small or just-opened page, Roamies now reads it once more before giving up (a browser builds a page's accessibility tree when first asked, so the first read could come back nearly empty and "View source" looked missing even though it was on screen). The error also now says how many controls it could see.

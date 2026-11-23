@@ -18,6 +18,20 @@ fn s<'a>(v: &'a Value, k: &str) -> &'a str {
     v[k].as_str().unwrap_or("")
 }
 
+/// A browser builds a page's accessibility tree when first asked, so the first read can come back nearly empty (a
+/// click then fails in a few milliseconds with "nothing is labelled"). A nearly empty page is read again, a few times.
+fn read_built(bus: &Bus, w: &Win) -> Read {
+    let mut r = read(bus, w);
+    for _ in 0..3 {
+        if r.nodes >= 40 {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(400));
+        r = read(bus, w);
+    }
+    r
+}
+
 /// The control whose label says `words`: the exact words first, then containing them; ones in view before ones scrolled away.
 fn find(r: &Read, words: &str, roles: &[&str]) -> Option<usize> {
     let want = words.trim().to_lowercase();
@@ -171,11 +185,20 @@ pub fn run(bus: &Bus, w: &Win, steps: &Value) -> Result<Vec<String>, String> {
                 return by_id(r, st).ok_or_else(|| "The page changed since read_window, so that id is out of date. Call read_window again and use the new ids.".to_string());
             }
             let words = if !s(st, "field").is_empty() { s(st, "field") } else { s(st, "text") };
-            find(r, words, roles).ok_or_else(|| format!("Nothing here is labelled {:?}. Call read_window to see the exact words.", words))
+            find(r, words, roles).ok_or_else(|| format!("Nothing here is labelled {:?} ({} controls could be read in this window). Call read_window to see the exact words; the label may not exist on this page.", words, r.controls.len()))
         };
         let mut changed = false;
         if !blind(st) && cache.is_none() {
-            cache = Some(read(bus, w));
+            cache = Some(read_built(bus, w));
+        }
+        // Words that aren't on a small page may be on one still being built (the tree of a page is made when first asked
+        // for): read it once more before saying they aren't there.
+        if !blind(st) && !st["id"].is_u64() {
+            let words = if !s(st, "field").is_empty() { s(st, "field") } else { s(st, "text") };
+            if !words.is_empty() && cache.as_ref().map_or(false, |r| r.nodes < 300 && find(r, words, &[]).is_none()) {
+                std::thread::sleep(Duration::from_millis(500));
+                cache = Some(read(bus, w));
+            }
         }
         match d {
             "click_text" | "click" => {
