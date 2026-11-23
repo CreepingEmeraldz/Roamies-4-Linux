@@ -2519,7 +2519,9 @@ const overlays = () => send({ type: 'overlays', ids: ['sidekick'] });
 async function onCli(action) {
   logLine('cli', { action });
   if (action === 'list') return showList({ seconds: 20, toggle: true });
-  if (action === 'ask') return onMenu('ask');
+  // As the typing tap does on other systems: what's sent from the field interrupts a reply still running (without it a
+  // message sent mid-answer waited in line with nothing on screen to say so, and on Wayland this is the only way in).
+  if (action === 'ask') return typeToAsk({ interrupt: true });
   if (action === 'snap') return onMenu('snap');
   if (action !== 'talk' || !VOICE_OK) return;
   if (!config.voice) return say(`Voice is off. Switch it on on the Listening page in ${PANEL}.`, 'happy');
