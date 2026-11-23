@@ -28,7 +28,7 @@ assert.match(platformLine('linux', {}), /^Platform: Linux on x64, a desktop on W
 // With the pointer helper (niri) the cursor is known, so the line must not say otherwise.
 assert.match(platformLine('linux', { session: 'wayland' }), /can't tell where their cursor is/);
 assert.doesNotMatch(platformLine('linux', { session: 'wayland', pointer: true }), /can't tell where their cursor/);
-assert.match(platformLine('linux', { session: 'wayland', pointer: true }), /cursor is known/);
+assert.match(platformLine('linux', { session: 'wayland', pointer: true }), /do know where their cursor is/);
 
 // The session: what the app says, else the same signs it reads.
 assert.equal(linuxSession({ ROAMIES_SESSION: 'x11', WAYLAND_DISPLAY: 'wayland-0' }), 'x11', 'the app knows best');
