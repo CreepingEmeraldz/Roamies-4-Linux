@@ -406,7 +406,7 @@ fn main() {
             let note = if r.controls.len() >= MAX_CONTROLS {
                 "Only the first controls are listed (this page has many more); its text is below. To use others, search for them by their words."
             } else if r.controls.is_empty() && r.on.is_empty() {
-                "This app shares no controls. Chromium-based browsers need accessibility on: if Roamies just switched it on, restart the browser once. Otherwise use a screenshot."
+                "This app shares no controls. If it is a Chromium-based browser (Chrome, Brave, Edge) or an Electron app, it only exposes a page once accessibility is on, and one that was already running needs a full restart (quit every window, start it again). If it still shares nothing after that, start it with --force-renderer-accessibility. Until then use a screenshot."
             } else {
                 ""
             };

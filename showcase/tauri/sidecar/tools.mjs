@@ -368,10 +368,23 @@ export function createTools({ allowActions, ui, ask, openUrl, onCommitments, foc
     if (res.ok === false) throw new Error(res.error || 'That did not work.');
     return res;
   }
+  // Pre-read (Linux, opt-in): at the start of a request, read the front window in the background so the model's first
+  // read_window of it is already there. Used once, only if fresh, and dropped as soon as anything could change the screen.
+  let pre = null; // { at, p }
+  const PRE_MS = 6000;
+  function prefetchFront() {
+    if (!ATSPI || HANDS) return;
+    const p = Promise.all([hands('ui', 'front'), hands('windows').catch(() => null)]);
+    p.catch(() => {});
+    pre = { at: Date.now(), p };
+  }
+  const dropPre = () => { pre = null; };
   async function readWindow(target = 'front') {
     const t = String(target || 'front');
+    const early = t === 'front' && pre && Date.now() - pre.at < PRE_MS ? pre.p : null;
+    pre = null;
     const read = () => Promise.all([hands('ui', t === 'front' ? 'front' : t.startsWith('window:') ? t : `app:${t}`), hands('windows').catch(() => null)]);
-    const [res, all] = await read().catch(async (err) => {
+    const [res, all] = await (early ? early.catch(() => null) : Promise.resolve(null)).then((r) => r ?? read()).catch(async (err) => {
       if (t === 'front' || !/No matching window/.test(String(err?.message ?? err)) || !(await launchApp(t, hands))) throw err;
       return read();
     });
@@ -399,6 +412,7 @@ export function createTools({ allowActions, ui, ask, openUrl, onCommitments, foc
 
   // A shell command: the built-in safety rules first (blocked stays blocked), then what the Commands page says about asking.
   async function runShell(command, ctx, askSetting = 'default') {
+    dropPre();
     if (!allowActions()) throw new Error(actionsOff);
     const v = classifyCommand(command, HOME, { exists: existsSync, cwd: workdir, own });
     if (v.level === BLOCK) throw new Error(`Blocked for safety: ${v.reason} Don't try to get around this; tell ${userName} what you wanted to do instead.`);
@@ -994,6 +1008,7 @@ export function createTools({ allowActions, ui, ask, openUrl, onCommitments, foc
         }),
         executionMode: 'sequential',
         execute: async ({ target = 'front', steps: given }, ctx) => {
+          dropPre();
           const asked = String(target || 'front');
           const steps = given.filter((s) => !['read_window', 'take_screenshot', 'screenshot'].includes(s.do));
           // Only reading steps (models sometimes send read_window here): read the window instead of failing the call.
@@ -1187,6 +1202,7 @@ A drawing stays until it's cleared, the window changes or the next one replaces 
       name: 'open', description: 'Open a website, a file or folder, or an app by name (e.g. "Safari", "https://skool.com", "~/Documents"). Links open in the default browser; set app to open one in a particular browser or app (e.g. app "Safari" when the user says "in Safari").',
       parameters: z.object({ target: z.string(), app: z.string().optional() }),
       execute: async ({ target, app }) => {
+        dropPre();
         let t = String(target).trim();
         // A bare web address ("example.com", "www.bbc.co.uk/news") is a link, not an app name: it used to fail as
         // "Unable to find application named example.com" and cost a retry. App bundles ("Notes.app") stay apps.
@@ -1410,5 +1426,5 @@ A drawing stays until it's cleared, the window changes or the next one replaces 
     const b = r?.window?.bounds;
     return Array.isArray(b) && b.length === 4 && b.every(Number.isFinite) ? b : null;
   }
-  return { tools, hands, whereNow, frontNow, frontBounds, ink: inkEvents, nextTurn: () => ++turn };
+  return { tools, hands, prefetchFront, whereNow, frontNow, frontBounds, ink: inkEvents, nextTurn: () => ++turn };
 }
