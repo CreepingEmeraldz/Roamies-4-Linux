@@ -65,6 +65,16 @@ pub(crate) fn spawn_sidecar(app: &AppHandle) {
     cmd.env("ROAMIES_EXE", std::env::current_exe().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default());
     #[cfg(target_os = "linux")]
     cmd.env("ROAMIES_SESSION", crate::linux::session().name()).env("ROAMIES_LAUNCH", crate::linux::launch_command());
+    // The accessibility bridge was turned off for Roamies' own window only: the helper and every app started from here keep it.
+    #[cfg(target_os = "linux")]
+    if crate::linux::a11y_off() {
+        cmd.env_remove("NO_AT_BRIDGE").env_remove("GTK_A11Y");
+    }
+    // `roamies --ask` (a shortcut) that started the app rather than reaching one running: the sidecar does it once the
+    // page is up, so the shortcut isn't wasted on a cold start.
+    if let Some(a) = cli_action(&std::env::args().collect::<Vec<_>>()).filter(|a| ["ask", "list", "talk", "snap"].contains(a)) {
+        cmd.env("ROAMIES_FIRST_CLI", a);
+    }
     // Layer-shell Wayland: the Cursor size is offered. The overlay sees the pointer over its own drawings (the marks are
     // its own surface), and on niri with PipeWire 1.4.8+ the pointer helper (pointer.rs) gives the position everywhere.
     #[cfg(target_os = "linux")]

@@ -2553,6 +2553,7 @@ function onVoice(m) {
 const overlays = () => send({ type: 'overlays', ids: ['sidekick'] });
 
 // What a second launch asked for (roamies --list | --talk | --ask).
+let firstCli = process.env.ROAMIES_FIRST_CLI || '';
 async function onCli(action) {
   logLine('cli', { action });
   if (action === 'list') return showList({ seconds: 20, toggle: true });
@@ -2590,6 +2591,7 @@ async function typeToAsk({ interrupt = false, value = '' } = {}) {
   warmUp();
   if (VOICE_ON()) speech.prewarm(); // the reply may be spoken: its socket opens while they type
   frontSoon = { at: Date.now(), p: whereNow() }; // and the front window, as for talking
+  const opened = Date.now(); frontSoon.p.then(() => logLine('ask_front', { ms: Date.now() - opened, sinceStart: Math.round(process.uptime()) }), () => {});
   const ctl = barAsk = new AbortController();
   const text = await ask({ placeholder: 'Ask me anything…', bar: true, ...(value ? { value } : {}) }, ctl.signal);
   if (barAsk === ctl) barAsk = null;
@@ -3107,6 +3109,8 @@ createInterface({ input: process.stdin }).on('line', (line) => {
     ui({ kind: 'look', look: config.look ?? 'classic' });
     if (config.avatarPin) ui({ kind: 'avatar_pin', ...config.avatarPin }); // pinned before a restart: back where they left it
     if (config.onboarded) ui({ kind: 'greet' });
+    // The shortcut that launched the app: its action, once, now that the page is up.
+    if (firstCli && config.onboarded && !onboarding) { const a = firstCli; firstCli = ''; setTimeout(() => onCli(a).catch((e) => console.error('cli', e)), 500); }
     agents.sync();
   } else if (m.type?.startsWith('ob_') || m.type?.startsWith('chat_') || m.type === 'set_keys' || m.type === 'set_actions' || m.type === 'set_login' || m.type === 'keybind_error') onGuide(m).catch((e) => console.error('guide', e));
   else if (m.type?.startsWith('voice')) onVoice(m);

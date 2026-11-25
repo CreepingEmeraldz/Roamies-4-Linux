@@ -58,8 +58,26 @@ pub(crate) fn wayland() -> bool {
 }
 
 /// First thing in main, before GTK starts and before any other thread exists.
+/// Roamies reads other apps through the accessibility bus, which it switches on for every app. Its own window doesn't
+/// need to be readable, and with it on typing into the page lags for seconds, so GTK's accessibility bridge is left off
+/// here (ROAMIES_A11Y=1 keeps it, and anything the user set stays). The helper programs and the apps started from here
+/// don't inherit that (see `a11y_off`).
+static A11Y_OFF: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+pub(crate) fn a11y_off() -> bool {
+    A11Y_OFF.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 pub(crate) fn init() {
     let env = |k: &str| std::env::var(k).ok();
+    if env("ROAMIES_A11Y_WAS_OFF").as_deref() == Some("1") {
+        // Started again by ourselves (below): the switch is already set, and still ours.
+        std::env::remove_var("ROAMIES_A11Y_WAS_OFF");
+        A11Y_OFF.store(true, std::sync::atomic::Ordering::Relaxed);
+    } else if env("ROAMIES_A11Y").as_deref() != Some("1") && env("NO_AT_BRIDGE").is_none() && env("GTK_A11Y").is_none() {
+        std::env::set_var("NO_AT_BRIDGE", "1");
+        std::env::set_var("GTK_A11Y", "none");
+        A11Y_OFF.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
     let s = session_from(env("XDG_SESSION_TYPE").as_deref(), env("WAYLAND_DISPLAY").as_deref());
     let _ = SESSION.set(s);
     // A GDK_BACKEND the user set to x11 is a choice for XWayland, and layer-shell can't be had there.
@@ -82,6 +100,7 @@ pub(crate) fn init() {
                 .args(std::env::args_os().skip(1))
                 .env("ROAMIES_LAYER", "0")
                 .env_remove("GDK_BACKEND")
+                .envs(if a11y_off() { vec![("ROAMIES_A11Y_WAS_OFF", "1")] } else { vec![] })
                 .exec();
             eprintln!("couldn't start again: {err}");
         }

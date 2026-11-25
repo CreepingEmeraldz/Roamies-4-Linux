@@ -1,2 +1,3 @@
-- Pre-read (off by default; General page, "Pre-read the window"): when you ask something, Roamies reads the window you're on in the background, so its first look at the page is instant. Used once, only if fresh, and only on your computer.
-- When a browser or Electron app shares no controls, the message now says what to do (quit every window and start it again, or start it with `--force-renderer-accessibility`), and Roamies is told to pass that on instead of saying the app is blocking it.
+- Typing into the ask field no longer lags for seconds after the app starts: Roamies's own window no longer builds an accessibility tree (reading other apps is unchanged, and apps you start from Roamies are unaffected). Set `ROAMIES_A11Y=1` to turn it back on.
+- Starting Roamies with `roamies --ask` (or `--list`, `--talk`, `--snap`) when it isn't running now does that once it's up, so the shortcut works on the first press.
+- Upstream fixes #165, #190, #191, #192 and #193.
