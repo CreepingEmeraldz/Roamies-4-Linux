@@ -1182,6 +1182,8 @@
 
   // ---------------------------------------------------------------- render
   const PANES = { home, memory, abilities: abilitiesPage, model: modelPage, appearance: appearancePage, speaking: speakingPage, listening: listeningPage, shortcuts: shortcutsPage, general: generalPage, commands: commandsPage, deps: depsPage, about: aboutPage, whatsnew: whatsNewPage };
+  // Pages by tab name, in a Map so no name can reach an object's built-in methods.
+  const PAGES = new Map(Object.entries(PANES));
   // focusKey: what to focus after (a data-k, or an element id); otherwise whatever had focus keeps it.
   function render(focusKey, animate = false) {
     if (!state) return;
@@ -1195,11 +1197,12 @@
     const scroll = $('pane-' + tab).closest('.body').scrollTop;
     head();
     const pane = $(`pane-${tab}`);
-    if (!Object.hasOwn(PANES, tab)) tab = 'home'; // show() only sets page names; this keeps PANES[tab] one of them
     const same = render.tab === tab; render.tab = tab;
     const before = new Set([...pane.querySelectorAll('[data-anim]')].filter(shown).map((n) => n.dataset.anim));
     // A page with a list fits it to the room left and pages it; any other page scrolls.
-    const draw = () => { pane.replaceChildren(...PANES[tab]().flat().filter(Boolean));
+    const found = PAGES.get(tab);
+    const page = typeof found === 'function' ? found : home;
+    const draw = () => { pane.replaceChildren(...page().flat().filter(Boolean));
     pane.classList.toggle('paged', !!pane.querySelector('.pagebox')); keepGone(); };
     draw();
     // Lists show as many rows as fit: drawn once to measure, again if a different number fits.
