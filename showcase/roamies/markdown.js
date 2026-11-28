@@ -6,7 +6,8 @@
 //    which have no room for layout: markers go, bullets become •, headings turn bold.
 // Pure functions (no DOM), so the sidecar tests can run them. Loaded after core.js.
 (() => {
-  const SAFE_LINK = /^(https?:\/\/|mailto:)/i;
+  // file:/// is a file on this computer: a click asks the sidecar, which opens documents and folders only (#200).
+  const SAFE_LINK = /^(https?:\/\/|mailto:|file:\/\/\/)/i;
 
 
   // ---------- maths and stray escapes ----------

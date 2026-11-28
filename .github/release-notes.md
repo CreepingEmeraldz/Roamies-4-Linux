@@ -1,3 +1,3 @@
 - Typing into the ask field no longer lags for seconds after the app starts: Roamies's own window no longer builds an accessibility tree (reading other apps is unchanged, and apps you start from Roamies are unaffected). Set `ROAMIES_A11Y=1` to turn it back on.
 - Starting Roamies with `roamies --ask` (or `--list`, `--talk`, `--snap`) when it isn't running now does that once it's up, so the shortcut works on the first press.
-- Upstream fixes #165, #190, #191, #192 and #193.
+- Based on upstream Roamies 0.1.53: live conversation (talk back and forth by voice, hands-free), a Recent activity list on Home, and fixes for #165, #171, #133, #190–#193, #200 and #208.
